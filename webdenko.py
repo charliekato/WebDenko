@@ -20,6 +20,50 @@ from swlib.select_event import get_event_no
 eventNo=1
 prgNo=1
 kumi=1
+lapunit=50
+lasttime = [0]*10
+lapcount = [0]*10
+
+def resettime():
+    global lasttime
+    global lapcount
+    lasttime = [0]*10
+    lapcount = [0]*10
+
+
+def set_lapunit():
+    global lapunit
+    row = execute("""
+        select
+          タッチ板 as touchBoard
+        from 大会設定
+        where 大会番号=?
+        """, eventNo,fetch="one")
+    if row.touchBoard == 4:
+        lapunit=50
+    if row.touchBoard == 3:
+        lapunit=25
+    if row.touchBoard == 2:
+        lapunit=100
+
+    if row.touchBoard == 1:
+        lapunit=50
+    return
+
+def timestr2int(mytime):
+    return int(mytime.replace(":", "").replace(".", ""))
+
+
+def timeint2str(mytime: int) -> str:
+    minutes = mytime // 10000
+    temps = mytime % 10000
+    seconds = temps // 100
+    centiseconds = temps % 100
+
+    if minutes > 0:
+        return f"{minutes:2}:{seconds:02}.{centiseconds:02}"
+    else:
+        return f"   {seconds:2}.{centiseconds:02}"
 
 # ===== データ =====
 
@@ -29,6 +73,56 @@ class TimeRecord:
     lane_no: int
     goal: bool
     is_running_timer: bool
+    lap_time: str
+    distance: str
+
+def substract_time(current_time: int, last_time: int) -> int:
+    minute = (current_time // 10000) - (last_time // 10000)
+    second = ((current_time % 10000) // 100) - ((last_time % 10000) // 100)
+    centi_second = (current_time % 100) - (last_time % 100)
+
+    if centi_second < 0:
+        second -= 1
+        centi_second += 100
+
+    if second < 0:
+        minute -= 1
+        second += 60
+    answer= minute * 10000 + second * 100 + centi_second
+
+
+
+    return answer
+
+def parse_packet(buf):
+
+    timer = format_running_time(buf[5:13].decode("ascii"))
+
+    if buf[0:2] == b'AR':
+        return TimeRecord(timer, 0, False, True,"","")
+
+    lane = buf[2] - ord('0')
+
+    if buf[13:14] == b'G':
+        this_time = timestr2int(timer)
+        lap_time = timeint2str(substract_time(this_time,lasttime[lane]))
+        lapcount[lane] += 1
+        lasttime[lane]=this_time
+        return TimeRecord(timer, lane, True, False,lap_time,"G")
+
+    if buf[13:14] == b'L':
+        this_time = timestr2int(timer)
+        lap_time = timeint2str(substract_time(this_time,lasttime[lane]))
+        lapcount[lane] += 1
+        lasttime[lane]=this_time
+        distance = str(lapunit * lapcount[lane]) + "m"
+
+
+
+        return TimeRecord(timer, lane, False, False,lap_time,distance)
+
+    return None
+
 
 
 queue = Queue()
@@ -75,18 +169,31 @@ async def broadcast(payload: str):
 
 
 # ===== broadcaster =====
+reset=True;
 
 async def broadcaster():
 
+    global reset
     while True:
 
         rec = await asyncio.to_thread(queue.get)
+        inttime = timestr2int(rec.str_time)
+        if inttime==0:
+            if reset:
+                show_next_race()
+                resettime()
+                reset=False
+        else:
+            reset=True
+
 
         payload = json.dumps({
             "str_time": rec.str_time,
             "lane_no": rec.lane_no,
             "goal": rec.goal,
-            "is_running_timer": rec.is_running_timer
+            "is_running_timer": rec.is_running_timer,
+            "lap_time": rec.lap_time,
+            "distance": rec.distance,
         })
 
         await broadcast(payload)
@@ -124,24 +231,6 @@ def format_running_time(src: str) -> str:
 
     return "".join(s)
 
-
-def parse_packet(buf):
-
-    timer = format_running_time(buf[5:13].decode("ascii"))
-
-    if buf[0:2] == b'AR':
-
-        return TimeRecord(timer, 0, False, True)
-
-    lane = buf[2] - ord('0')
-
-    if buf[13:14] == b'G':
-        return TimeRecord(timer, lane, True, False)
-
-    if buf[13:14] == b'L':
-        return TimeRecord(timer, lane, False, False)
-
-    return None
 
 
 # ===== serial thread =====
@@ -225,7 +314,7 @@ font-family:monospace;
 
 <div id="timer">0.00</div>
 
-<h2 id="header"> 　性別・種目・距離</h2>
+<h2 id="header"> 　</h2>
 <table width="100%" id="t"></table>
 
 
@@ -239,11 +328,11 @@ for(let i=0;i<10;i++){
 
   tr.innerHTML=
   `<td width="5%">${i}</td>
-  <td width=25%" id="name${i}">name</td>
-  <td width=25%" id="team${i}">team</td>
-  <td width=17%" id="lap${i}" >lap </td>
-  <td width=18%" id="time${i}">time</td>
-  <td width=10%" id="note${i}">time</td>
+  <td width="23%" id="name${i}">name</td>
+  <td width="28%" id="team${i}">team</td>
+  <td width="15%" align="right" id="lap${i}" >lap </td>
+  <td width="16%" align="right" id="time${i}">time</td>
+  <td width="13%" align="right" id="note${i}">dist</td>
   `
 
 table.appendChild(tr)
@@ -291,6 +380,7 @@ ws.onmessage=(ev)=>{
             document.getElementById("name"+lane.lane).textContent = lane.name
             document.getElementById("team"+lane.lane).textContent = lane.team
             document.getElementById("time"+lane.lane).textContent = lane.time
+            document.getElementById("note"+lane.lane).textContent = lane.time
         })
 
         return
@@ -300,6 +390,8 @@ ws.onmessage=(ev)=>{
         document.getElementById("timer").textContent=data.str_time
     }else{
         document.getElementById("time"+data.lane_no).textContent=data.str_time
+        document.getElementById("lap"+data.lane_no).textContent=data.lap_time
+        document.getElementById("note"+data.lane_no).textContent=data.distance
     }
 }
 
@@ -470,9 +562,7 @@ def push_lane_order():
             loop
         )
 def show_prev_race():
-    print("before get prev race", prgNo , kumi)
     if get_prev_race():
-        print("after get prev race", prgNo , kumi)
         push_lane_order()
     else:
         print("最初のレースです。")
@@ -480,9 +570,7 @@ def show_prev_race():
 
 
 def show_next_race():
-    print("before get next race", prgNo , kumi)
     if get_next_race():
-        print("after get next race", prgNo , kumi)
         push_lane_order()
     else:
         print("最終のレースです。")
@@ -515,12 +603,14 @@ def show_lane_order():
         lane = row.lane
         mark = row.mark
         if row.strokecode < 6:
-            team = row.team
-            name = row.swimmer1
+            team = row.team or ""
+            name = row.swimmer1 or ""
         else:
             if row.swimmer1:
                 team = "1: " + str(row.swimmer1)
-            name = row.team
+            else:
+                team = ""
+            name = row.team or ""
         if mark:
             goal=mark
         else:
@@ -530,9 +620,9 @@ def show_lane_order():
             "lane": lane,
             "name": name,
             "team": team,
-            "header" : str(prgNo) + " " + \
+            "header" : str(prgNo) + "  " + "   " +\
                     row.gender + row.className + row.distance + row.stroke + \
-                    row.phase + str(kumi) + "組",
+                    " " + row.phase +" "+ str(kumi) + "組",
             "time": goal
         })
             
@@ -560,6 +650,9 @@ def main():
     if password == "":
         if server == "olivia.local":
             password = "StrongPassword123!"
+        if server == "madoka.local":
+            password = "StrongPassword123!"
+
     connectionStr =  ("DRIVER=FreeTDS;" 
          f"SERVER={server};" 
           "PORT=1433;"
@@ -588,6 +681,7 @@ def main():
 
     t = threading.Thread(target=serial_thread, daemon=True)
     t.start()
+    set_lapunit()
 
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=5192)
