@@ -307,6 +307,18 @@ color:yellow;
 h2{ 
 font-size:24px;
 font-family:monospace;
+white-space: pre;
+}
+
+
+table {
+  border-collapse: collapse;
+}
+
+td {
+  border-bottom: 1px solid white; /* 横線だけ */
+  padding-top: 3px;
+  padding-bottom: 3px;
 }
 </style>
 </head>
@@ -620,7 +632,7 @@ def show_lane_order():
             "lane": lane,
             "name": name,
             "team": team,
-            "header" : str(prgNo) + "  " + "   " +\
+            "header" : str(prgNo) + "  "   +\
                     row.gender + row.className + row.distance + row.stroke + \
                     " " + row.phase +" "+ str(kumi) + "組",
             "time": goal
