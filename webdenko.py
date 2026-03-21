@@ -31,8 +31,9 @@ def resettime():
     lapcount = [0]*10
 
 
-def set_lapunit():
-    global lapunit
+
+
+def get_lapunit() -> int :
     row = execute("""
         select
           タッチ板 as touchBoard
@@ -45,12 +46,11 @@ def set_lapunit():
         lapunit=25
     if row.touchBoard == 2:
         lapunit=100
-
     if row.touchBoard == 1:
         lapunit=50
-    return
+    return lapunit
 
-def timestr2int(mytime):
+def timestr2int(mytime) -> int :
     return int(mytime.replace(":", "").replace(".", ""))
 
 
@@ -76,6 +76,25 @@ class TimeRecord:
     lap_time: str
     distance: str
 
+@dataclass(slots=True)
+class LaneInfo:
+    start_lane: int
+    end_lane: int
+
+def get_lane_info() -> LaneInfo:
+    row = execute("""
+        select 
+          使用水路予選 as maxLane,
+          ゼロコース使用 as zeroUse 
+        from 大会設定
+        where 大会番号=?
+        """, eventNo, fetch="one")
+    start_lane = 0 if row.zeroUse else 1
+    end_lane = row.maxLane-row.zeroUse
+    return LaneInfo(start_lane, end_lane)
+
+
+
 def substract_time(current_time: int, last_time: int) -> int:
     minute = (current_time // 10000) - (last_time // 10000)
     second = ((current_time % 10000) // 100) - ((last_time % 10000) // 100)
@@ -89,8 +108,6 @@ def substract_time(current_time: int, last_time: int) -> int:
         minute -= 1
         second += 60
     answer= minute * 10000 + second * 100 + centi_second
-
-
 
     return answer
 
@@ -116,8 +133,6 @@ def parse_packet(buf):
         lapcount[lane] += 1
         lasttime[lane]=this_time
         distance = str(lapunit * lapcount[lane]) + "m"
-
-
 
         return TimeRecord(timer, lane, False, False,lap_time,distance)
 
@@ -285,41 +300,42 @@ async def command(data: dict):
 
 @app.get("/", response_class=HTMLResponse)
 def index():
+    lane_info = get_lane_info()
 
-    return """
+    return   f"""
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <style>
-body{
+body{{
 background:black;
 color:white;
 font-size:24px;
 font-family:monospace;
-}
-#timer{
+}}
+#timer{{
 position:fixed;
 top:20px;
 right:30px;
 color:yellow;
-}
-h2{ 
+}}
+h2{{ 
 font-size:24px;
 font-family:monospace;
 white-space: pre;
-}
+}}
 
 
-table {
+table {{
   border-collapse: collapse;
-}
+}}
 
-td {
+td {{
   border-bottom: 1px solid white; /* 横線だけ */
   padding-top: 3px;
   padding-bottom: 3px;
-}
+}}
 </style>
 </head>
 <body>
@@ -331,81 +347,83 @@ td {
 
 
 <script>
-
+const STARTLANE={lane_info.start_lane};
+const ENDLANE={lane_info.end_lane};
 const table=document.getElementById("t")
-
-for(let i=0;i<10;i++){
+ 
+for(let i = STARTLANE; i < ENDLANE+1; i++) {{
 
   const tr=document.createElement("tr")
 
   tr.innerHTML=
-  `<td width="5%">${i}</td>
-  <td width="23%" id="name${i}">name</td>
-  <td width="28%" id="team${i}">team</td>
-  <td width="15%" align="right" id="lap${i}" >lap </td>
-  <td width="16%" align="right" id="time${i}">time</td>
-  <td width="13%" align="right" id="note${i}">dist</td>
+  `<td width="5%">${{i}}</td>
+  <td width="23%" id="name${{i}}">name</td>
+  <td width="28%" id="team${{i}}">team</td>
+  <td width="15%" align="right" id="lap${{i}}" >lap </td>
+  <td width="16%" align="right" id="time${{i}}">time</td>
+  <td width="13%" align="right" id="note${{i}}">dist</td>
   `
 
-table.appendChild(tr)
-}
-function clearLaneOrder() {
-    for (let i=0;i<10;i++) {
+    table.appendChild(tr)
+}}
+
+function clearLaneOrder() {{
+    for (let i=STARTLANE;i<ENDLANE+1;i++) {{
         document.getElementById("name"+i).textContent = "";
         document.getElementById("team"+i).textContent = "";
         document.getElementById("lap"+i).textContent = "";
         document.getElementById("time"+i).textContent = "";
         document.getElementById("note"+i).textContent = "";
-    }
-}
-async function loadLaneOrder(){
+    }}
+}}
+async function loadLaneOrder(){{
 
     const res = await fetch("/lane_order");
     const lanes = await res.json();
 
 
-    lanes.forEach(lane => {
+    lanes.forEach(lane => {{
 
         document.getElementById("header").textContent = lane.header;
         document.getElementById("name"+lane.lane).textContent = lane.name;
 
         document.getElementById("team"+lane.lane).textContent = lane.team;
 
-    });
-}
+    }});
+}}
 clearLaneOrder();
 loadLaneOrder();
 
 
 const ws=new WebSocket("ws://"+location.host+"/ws")
 
-ws.onmessage=(ev)=>{
+ws.onmessage=(ev)=>{{
 
     const data=JSON.parse(ev.data)
 
-    if(data.type=="lane_order"){
+    if(data.type=="lane_order"){{
 
         clearLaneOrder()
 
-        data.lanes.forEach(lane=>{
+        data.lanes.forEach(lane=>{{
             document.getElementById("header").textContent = lane.header
             document.getElementById("name"+lane.lane).textContent = lane.name
             document.getElementById("team"+lane.lane).textContent = lane.team
             document.getElementById("time"+lane.lane).textContent = lane.time
-            document.getElementById("note"+lane.lane).textContent = lane.time
-        })
+            //document.getElementById("note"+lane.lane).textContent = lane.time
+        }})
 
         return
-    }
+    }}
 
-    if(data.is_running_timer){
+    if(data.is_running_timer){{
         document.getElementById("timer").textContent=data.str_time
-    }else{
+    }}else{{
         document.getElementById("time"+data.lane_no).textContent=data.str_time
         document.getElementById("lap"+data.lane_no).textContent=data.lap_time
         document.getElementById("note"+data.lane_no).textContent=data.distance
-    }
-}
+    }}
+}}
 
 </script>
 
@@ -598,6 +616,8 @@ def show_lane_order():
            クラス名称 as className,
            性別 as gender,
            水路 as lane,
+           MAXLANE,
+           ゼロコース使用 as zeroUse,
            第１泳者 as swimmer1,
            第２泳者 as swimmer2,
            第３泳者 as swimmer3,
@@ -610,8 +630,14 @@ def show_lane_order():
             and  PRGNO = ?
             and  組 = ?
           """, eventNo, prgNo, kumi,fetch="all")
+    
+    first = True
     lanes = []
     for row in rows:
+        if first :
+            startLane = 0 if row.zeroUse == 1 else 1
+            endLane = row.MAXLANE - row.zeroUse
+            first = False
         lane = row.lane
         mark = row.mark
         if row.strokecode < 6:
@@ -654,6 +680,7 @@ def main():
     global prgNo
     global kumi
     global connectionStr
+    global lapunit
     server = input("Server Name: ")
     if server == "":
         server = "olivia.local"
@@ -693,7 +720,7 @@ def main():
 
     t = threading.Thread(target=serial_thread, daemon=True)
     t.start()
-    set_lapunit()
+    lapunit=get_lapunit()
 
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=5192)
