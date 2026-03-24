@@ -12,43 +12,33 @@ from fastapi.responses import HTMLResponse
 import pyodbc
 import serial
 import select
+import xml.etree.ElementTree as ET
 
+import aiohttp
 
 from swlib.select_event import get_event_no
 
+async def forward():
+    async with aiohttp.ClientSession() as session:
+        async with session.get("http://192.168.100.180:5000/f5") as res:
+            text = await res.text()
 
-eventNo=1
-prgNo=1
-kumi=1
-lapunit=50
-lasttime = [0]*10
-lapcount = [0]*10
+async def backward():
+    async with aiohttp.ClientSession() as session:
+        async with session.get("http://192.168.100.180:5000/f2") as res:
+            text = await res.text()
+
 
 def resettime():
     global lasttime
     global lapcount
+    global finish
     lasttime = [0]*10
     lapcount = [0]*10
+    finish = [1]*10
 
 
 
-
-def get_lapunit() -> int :
-    row = execute("""
-        select
-          タッチ板 as touchBoard
-        from 大会設定
-        where 大会番号=?
-        """, eventNo,fetch="one")
-    if row.touchBoard == 4:
-        lapunit=50
-    if row.touchBoard == 3:
-        lapunit=25
-    if row.touchBoard == 2:
-        lapunit=100
-    if row.touchBoard == 1:
-        lapunit=50
-    return lapunit
 
 def timestr2int(mytime) -> int :
     return int(mytime.replace(":", "").replace(".", ""))
@@ -78,21 +68,35 @@ class TimeRecord:
 
 @dataclass(slots=True)
 class LaneInfo:
+    event_name:str
+    lap_unit: int
     start_lane: int
     end_lane: int
 
-def get_lane_info() -> LaneInfo:
+def get_lap_unit(touchBoard) -> int :
+    if touchBoard == 3:
+        return 25
+    if touchBoard == 2:
+        return 100
+    # touchBoard = 1,4
+    return 50
+
+
+def get_lane_info(event_no) -> LaneInfo:
     row = execute("""
         select 
+          大会名1 as eventName,
           使用水路予選 as maxLane,
-          ゼロコース使用 as zeroUse 
+          ゼロコース使用 as zeroUse ,
+          タッチ板 as touchBoard
         from 大会設定
         where 大会番号=?
-        """, eventNo, fetch="one")
+        """, event_no, fetch="one")
+    event_name = row.eventName
     start_lane = 0 if row.zeroUse else 1
     end_lane = row.maxLane-row.zeroUse
-    return LaneInfo(start_lane, end_lane)
-
+    lap_unit = get_lap_unit(row.touchBoard)
+    return LaneInfo(event_name, lap_unit, start_lane, end_lane)
 
 
 def substract_time(current_time: int, last_time: int) -> int:
@@ -132,7 +136,7 @@ def parse_packet(buf):
         lap_time = timeint2str(substract_time(this_time,lasttime[lane]))
         lapcount[lane] += 1
         lasttime[lane]=this_time
-        distance = str(lapunit * lapcount[lane]) + "m"
+        distance = str(lane_info.lap_unit * lapcount[lane]) + "m"
 
         return TimeRecord(timer, lane, False, False,lap_time,distance)
 
@@ -195,7 +199,6 @@ async def broadcaster():
         inttime = timestr2int(rec.str_time)
         if inttime==0:
             if reset:
-                show_next_race()
                 resettime()
                 reset=False
         else:
@@ -300,7 +303,6 @@ async def command(data: dict):
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    lane_info = get_lane_info()
 
     return   f"""
 <!DOCTYPE html>
@@ -337,6 +339,7 @@ td {{
   padding-bottom: 3px;
 }}
 </style>
+<title>{lane_info.event_name} </title>
 </head>
 <body>
 
@@ -430,6 +433,19 @@ ws.onmessage=(ev)=>{{
 </body>
 </html>
 """
+
+@app.get("/control/p")
+async def show_prev():
+    show_prev_race()
+    ##-- send prev command to seiko swimv6
+    await backward()
+
+@app.get("/control/n")
+async def show_next():
+    show_next_race()
+    ##-- send next command to seiko swimv6
+    await forward()
+
 
 @app.get("/control", response_class=HTMLResponse)
 def control():
@@ -591,6 +607,7 @@ def push_lane_order():
             broadcast(payload),
             loop
         )
+
 def show_prev_race():
     if get_prev_race():
         push_lane_order()
@@ -607,6 +624,10 @@ def show_next_race():
 
 
 def show_lane_order():
+    global finish
+    global lapcount
+    finish = [1]*10
+    lapcount = [0]*10
     rows = execute("""
          select 
            距離 as distance,
@@ -635,11 +656,13 @@ def show_lane_order():
     lanes = []
     for row in rows:
         if first :
-            startLane = 0 if row.zeroUse == 1 else 1
-            endLane = row.MAXLANE - row.zeroUse
+            #startLane = 0 if row.zeroUse == 1 else 1
+            #endLane = row.MAXLANE - row.zeroUse
             first = False
         lane = row.lane
         mark = row.mark
+        if not mark:
+            finish[lane]=0
         if row.strokecode < 6:
             team = row.team or ""
             name = row.swimmer1 or ""
@@ -672,25 +695,34 @@ def show_lane_order():
 
 
 # ===== main =====
+eventNo=1
+prgNo=1
+kumi=1
+lasttime = [0]*10
+lapcount = [0]*10
+finish = [1]*10
+
+
+tree = ET.parse("webdenko.config")
+root = tree.getroot()
+server = root.find("Server").text
+password = root.find("Password").text
+
+eventNo = get_event_no(server,password)
+print("\033[2J\033[H", end="")
+serial_port = serial.Serial(
+    port="/dev/ttyUSB0",
+    baudrate=9600,
+    parity=serial.PARITY_EVEN,
+    bytesize=7,
+    timeout=None
+)
+
 
 def main():
 
-    global serial_port
-    global eventNo
-    global prgNo
-    global kumi
     global connectionStr
-    global lapunit
-    server = input("Server Name: ")
-    if server == "":
-        server = "olivia.local"
-
-    password = input("password: ")
-    if password == "":
-        if server == "olivia.local":
-            password = "StrongPassword123!"
-        if server == "madoka.local":
-            password = "StrongPassword123!"
+    global lane_info
 
     connectionStr =  ("DRIVER=FreeTDS;" 
          f"SERVER={server};" 
@@ -700,27 +732,11 @@ def main():
          f"PWD={password};" 
           "TDS_Version=7.4;")
 
-
-
-    eventNo = get_event_no(server,password)
-    prgNo=1
-    kumi=1
-    
-
            
     # screen clear
-    print("\033[2J\033[H", end="")
-    serial_port = serial.Serial(
-        port="/dev/ttyUSB0",
-        baudrate=9600,
-        parity=serial.PARITY_EVEN,
-        bytesize=7,
-        timeout=None
-    )
-
     t = threading.Thread(target=serial_thread, daemon=True)
     t.start()
-    lapunit=get_lapunit()
+    lane_info=get_lane_info(eventNo)
 
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=5192)
