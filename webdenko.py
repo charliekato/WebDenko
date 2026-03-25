@@ -19,20 +19,28 @@ import aiohttp
 from swlib.select_event import get_event_no
 
 async def forward():
-    async with aiohttp.ClientSession() as session:
-        async with session.get("http://192.168.100.180:5000/f5") as res:
-            text = await res.text()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get("http://192.168.100.180:5000/f5") as res:
+                text = await res.text()
+    except:
+        pass
 
 async def backward():
-    async with aiohttp.ClientSession() as session:
-        async with session.get("http://192.168.100.180:5000/f2") as res:
-            text = await res.text()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get("http://192.168.100.180:5000/f2") as res:
+                text = await res.text()
+    except:
+        pass
 
 
-def resettime():
+def reset_time():
     global lasttime
     global lapcount
     global finish
+    global current_state
+    current_state = {}
     lasttime = [0]*10
     lapcount = [0]*10
     finish = [1]*10
@@ -69,6 +77,7 @@ class TimeRecord:
 @dataclass(slots=True)
 class LaneInfo:
     event_name:str
+    zero_use: int
     lap_unit: int
     start_lane: int
     end_lane: int
@@ -93,10 +102,11 @@ def get_lane_info(event_no) -> LaneInfo:
         where 大会番号=?
         """, event_no, fetch="one")
     event_name = row.eventName
-    start_lane = 0 if row.zeroUse else 1
+    zero_use = row.zeroUse
+    start_lane = 0 if zero_use else 1
     end_lane = row.maxLane-row.zeroUse
     lap_unit = get_lap_unit(row.touchBoard)
-    return LaneInfo(event_name, lap_unit, start_lane, end_lane)
+    return LaneInfo(event_name,zero_use, lap_unit, start_lane, end_lane)
 
 
 def substract_time(current_time: int, last_time: int) -> int:
@@ -129,7 +139,7 @@ def parse_packet(buf):
         lap_time = timeint2str(substract_time(this_time,lasttime[lane]))
         lapcount[lane] += 1
         lasttime[lane]=this_time
-        return TimeRecord(timer, lane, True, False,lap_time,"G")
+        return TimeRecord(timer, lane, True, False,lap_time,"Goal")
 
     if buf[13:14] == b'L':
         this_time = timestr2int(timer)
@@ -180,6 +190,14 @@ async def broadcast(payload: str):
     for ws in connections:
         try:
             await ws.send_text(payload)
+            for lane, data in current_state.items():
+                await ws.send_text(json.dumps({
+                    "lane_no": lane,
+                    "str_time": data["time"],
+                    "lap_time": data["lap"],
+                    "distance": data["distance"],
+                    "is_running_timer": False
+                }))
         except:
             dead.append(ws)
 
@@ -193,17 +211,24 @@ reset=True;
 async def broadcaster():
 
     global reset
+    global current_state
     while True:
 
         rec = await asyncio.to_thread(queue.get)
         inttime = timestr2int(rec.str_time)
         if inttime==0:
             if reset:
-                resettime()
+                reset_time()
                 reset=False
         else:
             reset=True
 
+        if not rec.is_running_timer:
+            current_state[rec.lane_no] = {
+                "time": rec.str_time,
+                "lap": rec.lap_time,
+                "distance": rec.distance
+            }
 
         payload = json.dumps({
             "str_time": rec.str_time,
@@ -360,11 +385,12 @@ for(let i = STARTLANE; i < ENDLANE+1; i++) {{
 
   tr.innerHTML=
   `<td width="5%">${{i}}</td>
-  <td width="23%" id="name${{i}}">name</td>
-  <td width="28%" id="team${{i}}">team</td>
-  <td width="15%" align="right" id="lap${{i}}" >lap </td>
-  <td width="16%" align="right" id="time${{i}}">time</td>
-  <td width="13%" align="right" id="note${{i}}">dist</td>
+  <td width="20%" id="name${{i}}"></td>
+  <td width="30%" id="team${{i}}"></td>
+  <td width="12%" align="right" id="lap${{i}}" ></td>
+  <td width="15%" align="right" id="time${{i}}"></td>
+  <td width="10%" align="right" id="note${{i}}"></td>
+  <td width="8%" id="none${{i}}"></td>
   `
 
     table.appendChild(tr)
@@ -394,8 +420,8 @@ async function loadLaneOrder(){{
 
     }});
 }}
-clearLaneOrder();
-loadLaneOrder();
+//clearLaneOrder();
+//loadLaneOrder();
 
 
 const ws=new WebSocket("ws://"+location.host+"/ws")
@@ -610,24 +636,22 @@ def push_lane_order():
 
 def show_prev_race():
     if get_prev_race():
+        reset_time()
         push_lane_order()
     else:
-        print("最初のレースです。")
+            print("最初のレースです。")
 
 
 
 def show_next_race():
     if get_next_race():
+        reset_time()
         push_lane_order()
     else:
         print("最終のレースです。")
 
 
 def show_lane_order():
-    global finish
-    global lapcount
-    finish = [1]*10
-    lapcount = [0]*10
     rows = execute("""
          select 
            距離 as distance,
@@ -638,7 +662,6 @@ def show_lane_order():
            性別 as gender,
            水路 as lane,
            MAXLANE,
-           ゼロコース使用 as zeroUse,
            第１泳者 as swimmer1,
            第２泳者 as swimmer2,
            第３泳者 as swimmer3,
@@ -652,14 +675,11 @@ def show_lane_order():
             and  組 = ?
           """, eventNo, prgNo, kumi,fetch="all")
     
-    first = True
     lanes = []
     for row in rows:
-        if first :
-            #startLane = 0 if row.zeroUse == 1 else 1
-            #endLane = row.MAXLANE - row.zeroUse
-            first = False
-        lane = row.lane
+        lane = row.lane - lane_info.zero_use
+        if lane>9 :
+            continue
         mark = row.mark
         if not mark:
             finish[lane]=0
@@ -691,23 +711,18 @@ def show_lane_order():
     return lanes
 
 
-
-
-
 # ===== main =====
-eventNo=1
-prgNo=1
-kumi=1
-lasttime = [0]*10
-lapcount = [0]*10
-finish = [1]*10
 
+prgNo = 1
+kumi = 1
+reset_time()
 
 tree = ET.parse("webdenko.config")
 root = tree.getroot()
 server = root.find("Server").text
 password = root.find("Password").text
 
+current_state = {}
 eventNo = get_event_no(server,password)
 print("\033[2J\033[H", end="")
 serial_port = serial.Serial(
