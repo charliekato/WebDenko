@@ -186,18 +186,9 @@ async def websocket_endpoint(ws: WebSocket):
 async def broadcast(payload: str):
 
     dead = []
-
     for ws in connections:
         try:
             await ws.send_text(payload)
-            for lane, data in current_state.items():
-                await ws.send_text(json.dumps({
-                    "lane_no": lane,
-                    "str_time": data["time"],
-                    "lap_time": data["lap"],
-                    "distance": data["distance"],
-                    "is_running_timer": False
-                }))
         except:
             dead.append(ws)
 
@@ -223,23 +214,18 @@ async def broadcaster():
         else:
             reset=True
 
-        if not rec.is_running_timer:
-            current_state[rec.lane_no] = {
-                "time": rec.str_time,
-                "lap": rec.lap_time,
-                "distance": rec.distance
-            }
+        if rec.is_running_timer:
+            payload = json.dumps({"type": "rt",
+              "time": rec.str_time})
+            await broadcast(payload)
+        else:
+            payload = json.dumps({"type": "lt",
+                  "lane_no":rec.lane_no,
+                  "time": rec.str_time,
+                  "lap": rec.lap_time,
+                  "distance": rec.distance })
+            await broadcast(payload)
 
-        payload = json.dumps({
-            "str_time": rec.str_time,
-            "lane_no": rec.lane_no,
-            "goal": rec.goal,
-            "is_running_timer": rec.is_running_timer,
-            "lap_time": rec.lap_time,
-            "distance": rec.distance,
-        })
-
-        await broadcast(payload)
 
 
 @app.on_event("startup")
@@ -405,24 +391,6 @@ function clearLaneOrder() {{
         document.getElementById("note"+i).textContent = "";
     }}
 }}
-async function loadLaneOrder(){{
-
-    const res = await fetch("/lane_order");
-    const lanes = await res.json();
-
-
-    lanes.forEach(lane => {{
-
-        document.getElementById("header").textContent = lane.header;
-        document.getElementById("name"+lane.lane).textContent = lane.name;
-
-        document.getElementById("team"+lane.lane).textContent = lane.team;
-
-    }});
-}}
-//clearLaneOrder();
-//loadLaneOrder();
-
 
 const ws=new WebSocket("ws://"+location.host+"/ws")
 
@@ -430,7 +398,7 @@ ws.onmessage=(ev)=>{{
 
     const data=JSON.parse(ev.data)
 
-    if(data.type=="lane_order"){{
+    if(data.type=="lo"){{
 
         clearLaneOrder()
 
@@ -445,10 +413,11 @@ ws.onmessage=(ev)=>{{
         return
     }}
 
-    if(data.is_running_timer){{
-        document.getElementById("timer").textContent=data.str_time
-    }}else{{
-        document.getElementById("time"+data.lane_no).textContent=data.str_time
+    if(data.type=="rt"){{
+        document.getElementById("timer").textContent=data.time
+    }}
+    if(data.type=="lt"){{
+        document.getElementById("time"+data.lane_no).textContent=data.time
         document.getElementById("lap"+data.lane_no).textContent=data.lap_time
         document.getElementById("note"+data.lane_no).textContent=data.distance
     }}
@@ -525,18 +494,6 @@ document.getElementById("cmd").addEventListener("keydown", async (e)=>{
 </body>
 </html>
 """
-#document.addEventListener("keydown", async (e)=>{
-#
-#    if(e.key==="n" || e.key==="p" || e.key==="r"){
-#
-#        await fetch("/command",{
-#            method:"POST",
-#            headers:{"Content-Type":"application/json"},
-#            body:JSON.stringify({cmd:e.key})
-#        })
-#    }
-#})
-
 # ===== SQL SERVER ====
 def execute(sql, *params, fetch="all"):
     with pyodbc.connect(connectionStr) as conn:
@@ -624,7 +581,7 @@ def push_lane_order():
     lanes = show_lane_order()
 
     payload = json.dumps({
-        "type": "lane_order",
+        "type": "lo",
         "lanes": lanes
     })
 
@@ -639,7 +596,7 @@ def show_prev_race():
         reset_time()
         push_lane_order()
     else:
-            print("最初のレースです。")
+        print("最初のレースです。")
 
 
 
@@ -752,6 +709,7 @@ def main():
     t = threading.Thread(target=serial_thread, daemon=True)
     t.start()
     lane_info=get_lane_info(eventNo)
+    show_lane_order()
 
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=5192)
