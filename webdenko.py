@@ -125,12 +125,19 @@ def substract_time(current_time: int, last_time: int) -> int:
 
     return answer
 
+last_sent='99:99.9'
 def parse_packet(buf):
-
+    global last_sent
     timer = format_running_time(buf[5:13].decode("ascii"))
 
     if buf[0:2] == b'AR':
-        return TimeRecord(timer, 0, False, True,"","")
+        timer = timer[:-1]
+        if last_sent != timer:
+            last_sent = timer
+            return TimeRecord(timer, 0, False, True,"","")
+        else:
+            return None
+
 
     lane = buf[2] - ord('0')
 
@@ -222,7 +229,7 @@ async def broadcaster():
             payload = json.dumps({"type": "lt",
                   "lane_no":rec.lane_no,
                   "time": rec.str_time,
-                  "lap": rec.lap_time,
+                  "lap_time": rec.lap_time,
                   "distance": rec.distance })
             await broadcast(payload)
 
@@ -266,7 +273,7 @@ def format_running_time(src: str) -> str:
 
 def serial_thread():
 
-    buf = bytearray(20)
+    buf = bytearray(19)
     counter = -1
 
     while True:
