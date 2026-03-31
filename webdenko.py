@@ -235,8 +235,9 @@ async def broadcaster():
                 if strdistance[-1]=="m":
                     intdistance = int(strdistance[:-1])
                     swimmer_index = int(intdistance*4/race_distance)
-                    if swimmers[rec.lane_no] and swimmer_index < len(swimmers[rec.lane_no]):
-                        name = swimmers[rec.lane_no][swimmer_index]
+                    lane_no = rec.lane_no + lane_info.zero_use
+                    if swimmers[lane_no] and swimmer_index < len(swimmers[lane_no]):
+                        name = swimmers[lane_no][swimmer_index]
                     else:
                         name = ""
                     payload = json.dumps({"type": "sc",
@@ -477,11 +478,33 @@ ws.onmessage=(ev)=>{{
             const el = document.getElementById(id+lane)
             el.textContent = data[id === "note" ? "distance" : id === "time" ? "time" : id === "lap" ? "lap_time" : "place"]
 
-            // フェード状態リセット
+            // 初期化
             el.style.transition = "none"
             el.style.opacity = "1"
+            el.style.color = "red"  //まず赤
 
         }})
+        // === 点滅処理 ===
+        let blinkCount = 0
+        const blinkMax = 8  // 4回点滅 (on/off で4回)
+
+        const blinkInterval = setInterval(() => {{
+            ids.forEach(id=> {{
+                const el = document.getElementById(id+lane)
+                el.style.opacity = (el.style.opacity === "0" ? "1" : "0")
+            }})
+            blinkCount++
+
+            if (blinkCount >= blinkMax) {{
+                clearInterval(blinkInterval)
+                ids.forEach(id=>{{
+                    const el = document.getElementById(id+lane)
+                    el.style.opacity = "1"
+                    el.style.color = "white"
+                }})
+            }}
+        }}, 200) // 200->点滅速度　(200ms)
+        
 
         // 既存タイマー削除
         if(clearTimers[lane]){{
