@@ -23,24 +23,25 @@ async def forward():
         async with aiohttp.ClientSession() as session:
             async with session.get("http://192.168.100.180:5000/f5") as res:
                 text = await res.text()
-    except:
-        pass
+    except Exception as e:
+        print("forward error:" , e)
 
 async def backward():
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get("http://192.168.100.180:5000/f2") as res:
+            async with session.get("http://192.168.100.180:5000/f1") as res:
                 text = await res.text()
-    except:
-        pass
+    except Exception as e:
+        print("forward error:" , e)
+
 
 
 def reset_time():
     global lasttime
     global lapcount
     global finish
-    global current_state
-    current_state = {}
+    global place
+    place = [0]*60
     lasttime = [0]*10
     lapcount = [0]*10
     finish = [1]*10
@@ -49,7 +50,10 @@ def reset_time():
 
 
 def timestr2int(mytime) -> int :
-    return int(mytime.replace(":", "").replace(".", ""))
+    try:
+        return int(mytime.replace(":", "").replace(".", ""))
+    except ValueError:
+        return 0
 
 
 def timeint2str(mytime: int) -> str:
@@ -73,6 +77,7 @@ class TimeRecord:
     is_running_timer: bool
     lap_time: str
     distance: str
+    place: int
 
 @dataclass(slots=True)
 class LaneInfo:
@@ -125,20 +130,25 @@ def substract_time(current_time: int, last_time: int) -> int:
 
     return answer
 
+place = [0]*60
 last_sent='99:99.9'
 def parse_packet(buf):
     global last_sent
+    global place
     timer = format_running_time(buf[5:13].decode("ascii"))
 
     if buf[0:2] == b'AR':
         timer = timer[:-1]
         if last_sent != timer:
             last_sent = timer
-            return TimeRecord(timer, 0, False, True,"","")
+            return TimeRecord(timer, 0, False, True,"","",0)
         else:
             return None
 
 
+
+    if not (ord('0') <= buf[2] <= ord('9')):
+        return None
     lane = buf[2] - ord('0')
 
     if buf[13:14] == b'G':
@@ -146,21 +156,28 @@ def parse_packet(buf):
         lap_time = timeint2str(substract_time(this_time,lasttime[lane]))
         lapcount[lane] += 1
         lasttime[lane]=this_time
-        return TimeRecord(timer, lane, True, False,lap_time,"Goal")
+        place[lapcount[lane]] +=1
+        myplace = place[lapcount[lane]]
+
+        return TimeRecord(timer, lane, True, False,lap_time,"Goal",myplace)
 
     if buf[13:14] == b'L':
         this_time = timestr2int(timer)
         lap_time = timeint2str(substract_time(this_time,lasttime[lane]))
         lapcount[lane] += 1
         lasttime[lane]=this_time
-        distance = str(lane_info.lap_unit * lapcount[lane]) + "m"
-
-        return TimeRecord(timer, lane, False, False,lap_time,distance)
+        intdistance = lane_info.lap_unit * lapcount[lane]
+        if intdistance < race_distance:
+            distance = str(lane_info.lap_unit * lapcount[lane]) + "m"
+            place[lapcount[lane]] += 1
+            myplace = place[lapcount[lane]]
+            return TimeRecord(timer, lane, False, False,lap_time,distance,myplace)
 
     return None
 
 
 
+#queue = asyncio.Queue()
 queue = Queue()
 connections: list[WebSocket] = []
 
@@ -179,7 +196,7 @@ async def websocket_endpoint(ws: WebSocket):
     connections.append(ws)
 
     print("client connected")
-    push_lane_order()
+    push_lane_order(False)
 
     try:
         while True:
@@ -209,10 +226,23 @@ reset=True;
 async def broadcaster():
 
     global reset
-    global current_state
     while True:
 
         rec = await asyncio.to_thread(queue.get)
+        strdistance = rec.distance
+        if relay_flag:
+            if strdistance != "":
+                if strdistance[-1]=="m":
+                    intdistance = int(strdistance[:-1])
+                    swimmer_index = int(intdistance*4/race_distance)
+                    if swimmers[rec.lane_no] and swimmer_index < len(swimmers[rec.lane_no]):
+                        name = swimmers[rec.lane_no][swimmer_index]
+                    else:
+                        name = ""
+                    payload = json.dumps({"type": "sc",
+                          "lane_no": rec.lane_no,
+                          "swimmer": str(swimmer_index+1)+ " : " + name})
+                    await broadcast(payload)
         inttime = timestr2int(rec.str_time)
         if inttime==0:
             if reset:
@@ -230,7 +260,8 @@ async def broadcaster():
                   "lane_no":rec.lane_no,
                   "time": rec.str_time,
                   "lap_time": rec.lap_time,
-                  "distance": rec.distance })
+                  "distance": strdistance ,
+                  "place": rec.place})
             await broadcast(payload)
 
 
@@ -371,6 +402,7 @@ td {{
 const STARTLANE={lane_info.start_lane};
 const ENDLANE={lane_info.end_lane};
 const table=document.getElementById("t")
+const clearTimers = {{}}
  
 for(let i = STARTLANE; i < ENDLANE+1; i++) {{
 
@@ -379,23 +411,30 @@ for(let i = STARTLANE; i < ENDLANE+1; i++) {{
   tr.innerHTML=
   `<td width="5%">${{i}}</td>
   <td width="20%" id="name${{i}}"></td>
-  <td width="30%" id="team${{i}}"></td>
-  <td width="12%" align="right" id="lap${{i}}" ></td>
-  <td width="15%" align="right" id="time${{i}}"></td>
+  <td width="29%" id="team${{i}}"></td>
+  <td width="11%" align="right" id="lap${{i}}" ></td>
+  <td width="14%" align="right" id="time${{i}}"></td>
   <td width="10%" align="right" id="note${{i}}"></td>
-  <td width="8%" id="none${{i}}"></td>
+  <td width="7%" align="right" id="place${{i}}"></td>
+  <td width="4%" id="padding${{i}}"></td>
+
   `
 
     table.appendChild(tr)
+}}
+function clearLaneTime() {{
+    for (let i=STARTLANE;i<ENDLANE+1;i++) {{
+        document.getElementById("lap"+i).textContent = "";
+        document.getElementById("time"+i).textContent = "";
+        document.getElementById("note"+i).textContent = "";
+        document.getElementById("place"+i).textContent = "";
+    }}
 }}
 
 function clearLaneOrder() {{
     for (let i=STARTLANE;i<ENDLANE+1;i++) {{
         document.getElementById("name"+i).textContent = "";
         document.getElementById("team"+i).textContent = "";
-        document.getElementById("lap"+i).textContent = "";
-        document.getElementById("time"+i).textContent = "";
-        document.getElementById("note"+i).textContent = "";
     }}
 }}
 
@@ -408,25 +447,66 @@ ws.onmessage=(ev)=>{{
     if(data.type=="lo"){{
 
         clearLaneOrder()
+        if (data.flash) {{
+            clearLaneTime()
+        }}
 
+        document.getElementById("header").textContent = data.header
         data.lanes.forEach(lane=>{{
-            document.getElementById("header").textContent = lane.header
             document.getElementById("name"+lane.lane).textContent = lane.name
             document.getElementById("team"+lane.lane).textContent = lane.team
-            document.getElementById("time"+lane.lane).textContent = lane.time
-            //document.getElementById("note"+lane.lane).textContent = lane.time
         }})
 
         return
+    }}
+    if(data.type=="sc"){{
+        document.getElementById("team"+data.lane_no).textContent = data.swimmer
     }}
 
     if(data.type=="rt"){{
         document.getElementById("timer").textContent=data.time
     }}
     if(data.type=="lt"){{
-        document.getElementById("time"+data.lane_no).textContent=data.time
-        document.getElementById("lap"+data.lane_no).textContent=data.lap_time
-        document.getElementById("note"+data.lane_no).textContent=data.distance
+        const lane = data.lane_no
+        
+
+        const ids = ["time", "lap", "note", "place"]
+
+        // 表示更新 + フェードリセット
+        ids.forEach(id=>{{
+            const el = document.getElementById(id+lane)
+            el.textContent = data[id === "note" ? "distance" : id === "time" ? "time" : id === "lap" ? "lap_time" : "place"]
+
+            // フェード状態リセット
+            el.style.transition = "none"
+            el.style.opacity = "1"
+
+        }})
+
+        // 既存タイマー削除
+        if(clearTimers[lane]){{
+            clearTimeout(clearTimers[lane])
+        }}
+
+        if(data.distance !== "Goal"){{
+
+            // フェード開始（9秒後）
+            setTimeout(()=>{{
+                ids.forEach(id=>{{
+                    const el = document.getElementById(id+lane)
+                    el.style.transition = "opacity 1s"
+                    el.style.opacity = "0"
+                }})
+            }}, 9000)
+
+            // 完全クリア（10秒後）
+            clearTimers[lane] = setTimeout(()=>{{
+                ids.forEach(id=>{{
+                    const el = document.getElementById(id+lane)
+                    el.textContent = ""
+                }})
+            }}, 10000)
+        }}
     }}
 }}
 
@@ -583,13 +663,15 @@ def race_exist():
     return False
 
 
-def push_lane_order():
+def push_lane_order(flash):
 
-    lanes = show_lane_order()
+    (header, lanes) = show_lane_order()
 
     payload = json.dumps({
         "type": "lo",
-        "lanes": lanes
+        "header": header ,
+        "lanes": lanes,
+        "flash": flash
     })
 
     if connections:
@@ -601,7 +683,7 @@ def push_lane_order():
 def show_prev_race():
     if get_prev_race():
         reset_time()
-        push_lane_order()
+        push_lane_order(True)
     else:
         print("最初のレースです。")
 
@@ -610,12 +692,19 @@ def show_prev_race():
 def show_next_race():
     if get_next_race():
         reset_time()
-        push_lane_order()
+        push_lane_order(True)
     else:
         print("最終のレースです。")
 
+race_distance=100
+swimmers = [None]*11
+relay_flag = False
 
 def show_lane_order():
+    global race_distance
+    global relay_flag
+    global swimmers
+    swimmers = [None]*11
     rows = execute("""
          select 
            距離 as distance,
@@ -640,24 +729,35 @@ def show_lane_order():
           """, eventNo, prgNo, kumi,fetch="all")
     
     lanes = []
+    first = True
     for row in rows:
+        if first:
+            relay_flag = row.strokecode >5
+            distance = row.distance
+            race_distance = int(distance[:-1])
+            header =  str(prgNo) + "  "   +\
+                    row.gender + row.className + distance + row.stroke + \
+                    " " + row.phase +" "+ str(kumi) + "組"
+            first=False
+        swimmers[row.lane] = [
+            row.swimmer1 or "",
+            row.swimmer2 or "",
+            row.swimmer3 or "",
+            row.swimmer4 or "",
+            ]
+
         lane = row.lane - lane_info.zero_use
         if lane>9 :
             continue
-        mark = row.mark
-        if not mark:
-            finish[lane]=0
         if row.strokecode < 6:
             team = row.team or ""
             name = row.swimmer1 or ""
         else:
-            if row.swimmer1:
-                team = "1: " + str(row.swimmer1)
-            else:
-                team = ""
             name = row.team or ""
-        if mark:
-            goal=mark
+            team = "1 : " + (row.swimmer1 or "")
+            
+        if row.mark:
+            goal=row.mark
         else:
             goal=row.goal
 
@@ -665,14 +765,11 @@ def show_lane_order():
             "lane": lane,
             "name": name,
             "team": team,
-            "header" : str(prgNo) + "  "   +\
-                    row.gender + row.className + row.distance + row.stroke + \
-                    " " + row.phase +" "+ str(kumi) + "組",
             "time": goal
         })
             
     
-    return lanes
+    return header, lanes
 
 
 # ===== main =====
@@ -686,7 +783,6 @@ root = tree.getroot()
 server = root.find("Server").text
 password = root.find("Password").text
 
-current_state = {}
 eventNo = get_event_no(server,password)
 print("\033[2J\033[H", end="")
 serial_port = serial.Serial(
