@@ -42,7 +42,7 @@ def get_lane_info(event_no) -> LaneInfo:
 
 
 
-connections: list[WebSocket] = []
+connections: dict[WebSocket, dict] = {}
 
 
 # ===== FastAPI =====
@@ -56,41 +56,52 @@ app = FastAPI()
 async def websocket_endpoint(ws: WebSocket):
 
     await ws.accept()
-    connections.append(ws)
+    connections[ws] = {
+        "prgNo": 1,
+        "kumi": 1
+    }
 
     print("client connected")
-    push_lane_order(False)
+    await send_lane_order(ws)
 
     try:
         while True:
-            await asyncio.sleep(3600)
+            msg = await ws.receive_text()
+            data = json.loads(msg)
+            cmd = data.get("cmd")
+            if cmd == "next":
+                if get_next_race_for(ws) :
+                    await send_lane_order(ws)
+            elif cmd == "prev":
+                if get_prev_race_for(ws):
+                    await send_lane_order(ws)
+            elif cmd == "show":
+                state=connections[ws]
+                state["prgNo"]=data["prgNo"]
+                state["kumi"]=data["kumi"]
+                await send_lane_order(ws)
 
     except WebSocketDisconnect:
-        connections.remove(ws)
         print("client disconnected")
 
+async def send_lane_order(ws: WebSocket):
 
-async def broadcast(payload: str):
+    state = connections[ws]
 
-    dead = []
-    for ws in connections:
-        try:
-            await ws.send_text(payload)
-        except:
-            dead.append(ws)
+    header, lanes = show_lane_order_for(
+        state["prgNo"], state["kumi"]
+    )
 
-    for ws in dead:
-        connections.remove(ws)
+    payload = json.dumps({
+        "header": header,
+        "lanes": lanes
+    })
 
+    await ws.send_text(payload)
 
 
 
 # ===== HTML =====
-@app.get("/lane_order")
-def lane_order():
-    data = show_lane_order()
-    return data
-
 @app.get("/", response_class=HTMLResponse)
 def index():
 
@@ -122,7 +133,12 @@ td {{
   border-bottom: 1px solid white; /* 横線だけ */
   padding-top: 3px;
   padding-bottom: 3px;
+
+.nav {{
+  display: flex;
+  justify-content: space-between;
 }}
+
 </style>
 <title>{lane_info.event_name} </title>
 </head>
@@ -130,8 +146,12 @@ td {{
 
 
 <h2 id="header"> 　</h2>
- <button class="next" onclick="send('next')">次の組</button>
+ <input style="width: 50px" type="text"  id="prgno"  inputmode="numeric" value="1">
+ <input style="width: 50px"  id="heat" inputmode="numeric" value="1">
+
+ <button onclick="show()">表示</button>
  <button class="prev" onclick="send('prev')">前の組</button>
+ <button class="next" onclick="send('next')">次の組</button>
 
 
 <table width="100%" id="t"></table>
@@ -140,24 +160,35 @@ td {{
 const STARTLANE={lane_info.start_lane};
 const ENDLANE={lane_info.end_lane};
 const table=document.getElementById("t")
+
  
-async function send(cmd) {{
-    await fetch('/' + cmd)
+function send(cmd) {{
+    ws.send(JSON.stringify({{ cmd: cmd}}))
 }} 
+function show() {{
+    const prgno = document.getElementById("prgno").value
+    const heat = document.getElementById("heat").value
+    ws.send(JSON.stringify({{
+        cmd: "show",
+        prgNo: Number(prgno),
+        kumi: Number(heat)
+        }}))
+
+}}
 
 for(let i = STARTLANE; i < ENDLANE+1; i++) {{
 
   const tr=document.createElement("tr")
 
   tr.innerHTML=
-  `<td width="7%">${{i}}</td>
+  `<td width="3%">${{i}}</td>
   <td width="16%" id="name${{i}}"></td>
-  <td width="16%" id="team1${{i}}"></td>
-  <td width="16%" id="team2${{i}}"></td>
-  <td width="16%" id="team3${{i}}"></td>
-  <td width="16%" id="team4${{i}}"></td>
-  <td width="8%" id="mark${{i}}"></td>
-  <td width="5%" id="padding${{i}}"></td>
+  <td width="19%" id="team1${{i}}"></td>
+  <td width="19%" id="team2${{i}}"></td>
+  <td width="19%" id="team3${{i}}"></td>
+  <td width="19%" id="team4${{i}}"></td>
+  <td width="7%" id="mark${{i}}"></td>
+  <td width="1%" id="padding${{i}}"></td>
 
   `
 
@@ -176,10 +207,10 @@ function clearLaneOrder() {{
 
 const ws=new WebSocket("ws://"+location.host+"/ws")
 
+
 ws.onmessage=(ev)=>{{
 
     const data=JSON.parse(ev.data)
-
 
         clearLaneOrder()
 
@@ -203,19 +234,6 @@ ws.onmessage=(ev)=>{{
 </html>
 """
 
-@app.get("/prev")
-async def show_prev():
-    show_prev_race()
-
-@app.get("/next")
-async def show_next():
-    show_next_race()
-
-@app.on_event("startup")
-async def startup():
-    global loop
-    loop = asyncio.get_running_loop()
-
 
 
 # ===== SQL SERVER ====
@@ -232,7 +250,7 @@ def execute(sql, *params, fetch="all"):
 
         conn.commit()
 
-def get_max_kumi():   
+def get_max_kumi_for(prgNo):   
     row = execute("""
         select max(組)
         from v記録
@@ -251,37 +269,45 @@ def get_max_prgno():
 
     return row[0] if row else None
 
-def get_prev_race():
-    global kumi
-    global prgNo
+def get_prev_race_for(ws):
+    state = connections[ws]
+    prgNo = state["prgNo"]
+    kumi = state["kumi"]
     while kumi>1:
         kumi -= 1
-        if race_exist():
+        if race_exist_for(prgNo, kumi):
+            state["kumi"] = kumi
             return True
     while prgNo>1:
         prgNo -= 1
-        kumi = get_max_kumi()
-        if race_exist():
+        kumi = get_max_kumi_for(prgNo)
+        if race_exist_for(prgNo,kumi):
+            state["kumi"] = kumi
+            state["prgNo"] = prgNo
             return True
     return False
 
-def get_next_race():   
-    global kumi
-    global prgNo
-    while kumi<get_max_kumi():
+def get_next_race_for(ws):   
+    state = connections[ws]
+    prgNo = state["prgNo"]
+    kumi = state["kumi"]
+    while kumi<get_max_kumi_for(prgNo):
         kumi += 1 
-        if race_exist():
+        if race_exist_for(prgNo, kumi):
+            state["kumi"] = kumi
             return True
     kumi=1
     maxprgno = get_max_prgno()
     while prgNo<maxprgno:
         prgNo += 1
-        if race_exist():
+        if race_exist_for(prgNo, kumi):
+            state["prgNo"] = prgNo
+            state["kumi"] = kumi
             return True
     return False
 
 
-def race_exist():
+def race_exist_for(prgNo, kumi):
     rows = execute("""
         select 
           選手番号 as swimmerid,
@@ -300,37 +326,26 @@ def race_exist():
     return False
 
 
-def push_lane_order(flash):
+#def push_lane_order(flash):
 
-    (header, lanes) = show_lane_order()
+#    (header, lanes) = show_lane_order()
 
-    payload = json.dumps({
-        "header": header ,
-        "lanes": lanes
-    })
-
-    if connections:
-        asyncio.run_coroutine_threadsafe(
-            broadcast(payload),
-            loop
-        )
-
-def show_prev_race():
-    if get_prev_race():
-        push_lane_order(True)
-    else:
-        print("最初のレースです。")
+#    payload = json.dumps({
+#        "header": header ,
+#        "lanes": lanes
+#    })
+#
+#    if connections:
+#        asyncio.run_coroutine_threadsafe(
+#            broadcast(payload),
+#            loop
+#        )
 
 
 
-def show_next_race():
-    if get_next_race():
-        push_lane_order(True)
-    else:
-        print("最終のレースです。")
 
-
-def show_lane_order():
+def show_lane_order_for(prgNo: int, kumi: int):
+    print("prgNo: ", prgNo, "   kumi: ", kumi)
     rows = execute("""
          select 
            距離 as distance,
@@ -370,10 +385,10 @@ def show_lane_order():
             name = row.swimmer1 or ""
         else:
             name = row.team or ""
-            team1 = "1. " + (row.swimmer1 or "")
-            team2 = "2. " + (row.swimmer2 or "")
-            team3 = "3. " + (row.swimmer3 or "")
-            team4 = "4. " + (row.swimmer4 or "")
+            team1 =  row.swimmer1 or ""
+            team2 =  row.swimmer2 or ""
+            team3 =  row.swimmer3 or ""
+            team4 =  row.swimmer4 or ""
             
 
         lanes.append({
@@ -419,7 +434,6 @@ def main():
            
     # screen clear
     lane_info=get_lane_info(eventNo)
-    show_lane_order()
 
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=5193)
