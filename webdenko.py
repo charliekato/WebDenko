@@ -221,7 +221,7 @@ async def broadcast(payload: str):
 
 
 # ===== broadcaster =====
-reset=True;
+reset=True
 
 async def broadcaster():
 
