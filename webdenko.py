@@ -247,7 +247,7 @@ async def broadcaster():
         inttime = timestr2int(rec.str_time)
         if inttime==0:
             if reset:
-                reset_time()
+                show_next_race()
                 reset=False
         else:
             reset=True
@@ -307,27 +307,19 @@ def serial_thread():
 
     buf = bytearray(19)
     counter = -1
-
     while True:
 
-        data = serial_port.read(18)
+        data = serial_port.read(16)
 
         for b in data:
-
             if b == STX:
                 counter = 0
-
             elif b == ETX:
-
                 counter = -1
-
                 rec = parse_packet(buf)
-
                 if rec:
                     queue.put(rec)
-
             elif counter >= 0:
-
                 buf[counter] = b
                 counter += 1
 
@@ -439,7 +431,14 @@ function clearLaneOrder() {{
     }}
 }}
 
-const ws=new WebSocket("ws://"+location.host+"/ws")
+
+const ws=new WebSocket(
+    (location.protocol === "https:" ? "wss://" : "ws://")
+    + location.host
+    + location.pathname + "ws"
+)
+
+
 
 ws.onmessage=(ev)=>{{
 
@@ -623,7 +622,7 @@ def get_max_kumi():
         select max(組)
         from v記録
         where 大会番号=?
-        and PRGNO=?
+        and 表示用競技番号=?
         """, eventNo,prgNo,fetch="one")
     return row[0] if row else 0
 
@@ -738,16 +737,17 @@ def show_lane_order():
            性別 as gender,
            水路 as lane,
            MAXLANE,
+           氏名 as sname,
            第１泳者 as swimmer1,
            第２泳者 as swimmer2,
            第３泳者 as swimmer3,
            第４泳者 as swimmer4,
-           所属 as team,
+           所属名 as team,
            ゴール as goal,
            棄権印刷マーク as mark
          from v記録
            where 大会番号= ?
-            and  PRGNO = ?
+            and  表示用競技番号 = ?
             and  組 = ?
           """, eventNo, prgNo, kumi,fetch="all")
     
@@ -774,7 +774,7 @@ def show_lane_order():
             continue
         if row.strokecode < 6:
             team = row.team or ""
-            name = row.swimmer1 or ""
+            name = row.sname or ""
         else:
             name = row.team or ""
             team = "1 : " + (row.swimmer1 or "")
