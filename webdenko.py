@@ -245,7 +245,8 @@ async def broadcaster():
                           "swimmer": str(swimmer_index+1)+ " : " + name})
                     await broadcast(payload)
         inttime = timestr2int(rec.str_time)
-        if inttime==0:
+        if inttime == 0:  # rec.str_time="    0.00" 
+            print("inttime=0")
             if reset:
                 show_next_race()
                 reset=False
@@ -310,7 +311,7 @@ def serial_thread():
     while True:
 
         data = serial_port.read(16)
-
+        print(data) #debug
         for b in data:
             if b == STX:
                 counter = 0
@@ -355,7 +356,7 @@ def index():
 body{{
 background:black;
 color:white;
-font-size:24px;
+font-size:35px;
 font-family:monospace;
 }}
 #timer{{
@@ -567,35 +568,32 @@ font-size:30px;
 font-family:monospace;
 text-align:center;
 }
-input{
-font-size:30px;
-width:200px;
-text-align:center;
+button{
+    font-size:40px;
+    width:300px;
+    height:120px;
+    margin:30px;
+    cursor:pointer;
 }
+
 </style>
 </head>
 <body>
 
 <h1>Race Control</h1>
 
-<input id="cmd" autofocus placeholder="n / p / r" >
-
+<button onclick="sendCommand('p')">← PREV</button>
+<button onclick="sendCommand('n')">NEXT →</button>
 <script>
-document.getElementById("cmd").addEventListener("keydown", async (e)=>{
+async function sendCommand(cmd){
 
-    if(e.key==="Enter"){
+    await fetch("/command",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({cmd:cmd})
+    })
 
-        const cmd=e.target.value
-
-        await fetch("/command",{
-            method:"POST",
-            headers:{"Content-Type":"application/json"},
-            body:JSON.stringify({cmd:cmd})
-        })
-
-        e.target.value=""
-    }
-})
+}
 
 
 </script>
@@ -805,11 +803,15 @@ tree = ET.parse("webdenko.config")
 root = tree.getroot()
 server = root.find("Server").text
 password = root.find("Password").text
+connectionStr = root.find("connectionStr").text
+serialPort = root.find("serialPort").text
 
-eventNo = get_event_no(server,password)
+print( repr(connectionStr) )
+
+eventNo = get_event_no(connectionStr)
 print("\033[2J\033[H", end="")
 serial_port = serial.Serial(
-    port="/dev/ttyUSB0",
+    port=serialPort,
     baudrate=9600,
     parity=serial.PARITY_EVEN,
     bytesize=7,
@@ -821,14 +823,6 @@ def main():
 
     global connectionStr
     global lane_info
-
-    connectionStr =  ("DRIVER=FreeTDS;" 
-         f"SERVER={server};" 
-          "PORT=1433;"
-          "UID=sw;" 
-          "DATABASE=sw;" 
-         f"PWD={password};" 
-          "TDS_Version=7.4;")
 
            
     # screen clear

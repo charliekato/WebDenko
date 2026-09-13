@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ApplicationConfig>
+    <Server>Olivia</Server>
+    <Password>StrongPassword123!</Password>
+    <connectionStr>DRIVER={ODBC Driver 18 for SQL Server};SERVER=madoka.local\SQLEXPRESS;UID=sw;DATABASE=sw;PWD=;TrustServerCertificate=yes;</connectionStr>
+</ApplicationConfig>

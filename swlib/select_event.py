@@ -34,17 +34,11 @@ class EventApp(App):
         self.exit()
 
 
-def get_event_no(server, password):
-
-    connectionStr =  ("DRIVER=FreeTDS;" 
-         f"SERVER={server};" 
-          "PORT=1433;"
-          "UID=sw;" 
-          "DATABASE=sw;" 
-         f"PWD={password};" 
-          "TDS_Version=7.4;")
-
-   
+def get_event_no(connectionStr):
+#          "INSTANCE=SQLEXPRESS;"
+#          "PORT=1433;"
+  
+    print(connectionStr)
 
     events = []
 
