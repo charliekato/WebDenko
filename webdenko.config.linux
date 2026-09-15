@@ -2,6 +2,7 @@
 <ApplicationConfig>
     <Server>Olivia</Server>
     <Password>StrongPassword123!</Password>
-    <connectionStr>DRIVER={ODBC Driver 18 for SQL Server};SERVER=madoka\SQLEXPRESS;UID=sw;DATABASE=sw;PWD=;TrustServerCertificate=yes;</connectionStr>
+    <connectionStr>DRIVER=FreeTDS;SERVER=Olivia.local;
+        PORT=1433;UID=sw;DATABASE=sw;PWD=StrongPassword123!;TDS_Version=7.4;</connectionStr>
     <serialPort>/dev/ttyUSB0</serialPort>
 </ApplicationConfig>

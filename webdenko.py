@@ -35,6 +35,20 @@ async def backward():
         print("forward error:" , e)
 
 
+def write_server(lane_no, time, distance, goal) :
+    if goal :
+        sql = f"""
+            UPDATE 記録 SET ゴール = ?
+            WHERE 競技番号=? AND 組=? AND 水路=? and 大会番号=?
+            """
+        execute(sql,time,prgNo,kumi,lane_no,eventNo)
+    sql = f"""
+        UPDATE ラップ SET [{distance}] = ?
+      WHERE 競技番号=?  AND 組=? AND 水路=?　and 大会番号=?
+      """
+    execute(sql, time,prgNo,kumi,lane_no,eventNo)
+    print(f"write_server: prgNo={prgNo}, kumi={kumi}, lane ={lane_no}, time={time}, distance={distance}, goal={goal}")
+
 
 def reset_time():
     global lasttime
@@ -151,24 +165,29 @@ def parse_packet(buf):
         return None
     lane = buf[2] - ord('0')
 
+    this_time = timestr2int(timer)
+    lap_time = timeint2str(substract_time(this_time,lasttime[lane]))
+    lapcount[lane] += 1
+    lasttime[lane]=this_time
     if buf[13:14] == b'G':
-        this_time = timestr2int(timer)
-        lap_time = timeint2str(substract_time(this_time,lasttime[lane]))
-        lapcount[lane] += 1
-        lasttime[lane]=this_time
+        #this_time = timestr2int(timer)
+        #lap_time = timeint2str(substract_time(this_time,lasttime[lane]))
+        #lapcount[lane] += 1
+        #lasttime[lane]=this_time
         place[lapcount[lane]] +=1
         myplace = place[lapcount[lane]]
+        distance = str(race_distance) +"m"
 
-        return TimeRecord(timer, lane, True, False,lap_time,"Goal",myplace)
+        return TimeRecord(timer, lane, True, False,lap_time,distance,myplace)
 
     if buf[13:14] == b'L':
-        this_time = timestr2int(timer)
-        lap_time = timeint2str(substract_time(this_time,lasttime[lane]))
-        lapcount[lane] += 1
-        lasttime[lane]=this_time
+        #this_time = timestr2int(timer)
+        #lap_time = timeint2str(substract_time(this_time,lasttime[lane]))
+        #lapcount[lane] += 1
+        #lasttime[lane]=this_time
         intdistance = lane_info.lap_unit * lapcount[lane]
         if intdistance < race_distance:
-            distance = str(lane_info.lap_unit * lapcount[lane]) + "m"
+            distance = str(intdistance) + "m"
             place[lapcount[lane]] += 1
             myplace = place[lapcount[lane]]
             return TimeRecord(timer, lane, False, False,lap_time,distance,myplace)
@@ -231,22 +250,22 @@ async def broadcaster():
         rec = await asyncio.to_thread(queue.get)
         strdistance = rec.distance
         if relay_flag:
-            if strdistance != "":
-                if strdistance[-1]=="m":
-                    intdistance = int(strdistance[:-1])
-                    swimmer_index = int(intdistance*4/race_distance)
-                    lane_no = rec.lane_no + lane_info.zero_use
-                    if swimmers[lane_no] and swimmer_index < len(swimmers[lane_no]):
-                        name = swimmers[lane_no][swimmer_index]
-                    else:
-                        name = ""
-                    payload = json.dumps({"type": "sc",
-                          "lane_no": rec.lane_no,
-                          "swimmer": str(swimmer_index+1)+ " : " + name})
-                    await broadcast(payload)
+            #if strdistance != "":
+            if not rec.goal :
+                #if strdistance[-1]=="m":
+                intdistance = int(strdistance[:-1])
+                swimmer_index = int(intdistance*4/race_distance)
+                lane_no = rec.lane_no + lane_info.zero_use
+                if swimmers[lane_no] and swimmer_index < len(swimmers[lane_no]):
+                    name = swimmers[lane_no][swimmer_index]
+                else:
+                    name = ""
+                payload = json.dumps({"type": "sc",
+                      "lane_no": rec.lane_no,
+                      "swimmer": str(swimmer_index+1)+ " : " + name})
+                await broadcast(payload)
         inttime = timestr2int(rec.str_time)
         if inttime == 0:  # rec.str_time="    0.00" 
-            print("inttime=0")
             if reset:
                 show_next_race()
                 reset=False
@@ -258,6 +277,7 @@ async def broadcaster():
               "time": rec.str_time})
             await broadcast(payload)
         else:
+            write_server(rec.lane_no,rec.str_time,strdistance,rec.goal)
             payload = json.dumps({"type": "lt",
                   "lane_no":rec.lane_no,
                   "time": rec.str_time,
@@ -311,7 +331,7 @@ def serial_thread():
     while True:
 
         data = serial_port.read(16)
-        print(data) #debug
+        #print(data) #debug
         for b in data:
             if b == STX:
                 counter = 0
@@ -602,7 +622,7 @@ async function sendCommand(cmd){
 </html>
 """
 # ===== SQL SERVER ====
-def execute(sql, *params, fetch="all"):
+def execute(sql, *params, fetch="none"):
     with pyodbc.connect(connectionStr) as conn:
         cur = conn.cursor()
         cur.execute(sql, *params)
