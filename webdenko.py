@@ -250,20 +250,19 @@ async def broadcaster():
         rec = await asyncio.to_thread(queue.get)
         strdistance = rec.distance
         if relay_flag:
-            #if strdistance != "":
-            if not rec.goal :
-                #if strdistance[-1]=="m":
-                intdistance = int(strdistance[:-1])
-                swimmer_index = int(intdistance*4/race_distance)
-                lane_no = rec.lane_no + lane_info.zero_use
-                if swimmers[lane_no] and swimmer_index < len(swimmers[lane_no]):
-                    name = swimmers[lane_no][swimmer_index]
-                else:
-                    name = ""
-                payload = json.dumps({"type": "sc",
-                      "lane_no": rec.lane_no,
-                      "swimmer": str(swimmer_index+1)+ " : " + name})
-                await broadcast(payload)
+            if strdistance != "":
+                if strdistance[-1]=="m":
+                    intdistance = int(strdistance[:-1])
+                    swimmer_index = int(intdistance*4/race_distance)
+                    lane_no = rec.lane_no + lane_info.zero_use
+                    if swimmers[lane_no] and swimmer_index < len(swimmers[lane_no]):
+                        name = swimmers[lane_no][swimmer_index]
+                    else:
+                        name = ""
+                    payload = json.dumps({"type": "sc",
+                          "lane_no": rec.lane_no,
+                          "swimmer": str(swimmer_index+1)+ " : " + name})
+                    await broadcast(payload)
         inttime = timestr2int(rec.str_time)
         if inttime == 0:  # rec.str_time="    0.00" 
             if reset:
@@ -277,7 +276,10 @@ async def broadcaster():
               "time": rec.str_time})
             await broadcast(payload)
         else:
-            write_server(rec.lane_no,rec.str_time,strdistance,rec.goal)
+            if writeFlag :
+                write_server(rec.lane_no,rec.str_time,strdistance,rec.goal)
+            if rec.goal :
+                strdistance="Goal"
             payload = json.dumps({"type": "lt",
                   "lane_no":rec.lane_no,
                   "time": rec.str_time,
@@ -331,7 +333,6 @@ def serial_thread():
     while True:
 
         data = serial_port.read(16)
-        #print(data) #debug
         for b in data:
             if b == STX:
                 counter = 0
@@ -825,6 +826,15 @@ server = root.find("Server").text
 password = root.find("Password").text
 connectionStr = root.find("connectionStr").text
 serialPort = root.find("serialPort").text
+writeFlagText = root.find("write_server").text
+writeFlag = False
+if writeFlagText=="yes" :
+    writeFlag = True
+if writeFlagText=="true" :
+    writeFlag = True
+if writeFlagText=="on" :
+    writeFlag = True
+
 
 print( repr(connectionStr) )
 
