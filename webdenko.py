@@ -304,6 +304,7 @@ STX = 2
 ETX = 3
 
 serial_port = None
+hold = False
 
 
 def format_running_time(src: str) -> str:
@@ -327,18 +328,23 @@ def format_running_time(src: str) -> str:
 # ===== serial thread =====
 
 def serial_thread():
+    global hold
 
     buf = bytearray(19)
     counter = -1
     while True:
 
         data = serial_port.read(16)
+        if hold:
+            counter = -1
+            continue
         for b in data:
             if b == STX:
                 counter = 0
             elif b == ETX:
                 counter = -1
                 rec = parse_packet(buf)
+                print(buf)
                 if rec:
                     queue.put(rec)
             elif counter >= 0:
@@ -356,6 +362,7 @@ def lane_order():
     return data
 @app.post("/command")
 async def command(data: dict):
+    global hold
     cmd = data["cmd"]
     if cmd == "n":
         show_next_race()
@@ -363,7 +370,9 @@ async def command(data: dict):
         show_prev_race()
     elif cmd == "r":
         show_lane_order()
-    return {"ok": True}
+    elif cmd == "h":
+        hold = not hold
+    return {"ok": True, "hold": hold}
 
 @app.get("/", response_class=HTMLResponse)
 def index():
@@ -596,7 +605,10 @@ button{
     margin:30px;
     cursor:pointer;
 }
-
+button.hold {
+    background:red;
+    color:white;
+}
 </style>
 </head>
 <body>
@@ -605,6 +617,7 @@ button{
 
 <button onclick="sendCommand('p')">← PREV</button>
 <button onclick="sendCommand('n')">NEXT →</button>
+<button id="holdButton" onclick="toggleHold()">HOLD</button>
 <script>
 async function sendCommand(cmd){
 
@@ -615,7 +628,22 @@ async function sendCommand(cmd){
     })
 
 }
-
+async function toggleHold(){
+    const response = await fetch("/command",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({cmd:"h"})
+    })
+    const data = await response.json()
+    const holdButton = document.getElementById("holdButton")
+    if (data.hold) {
+        holdButton.classList.add("hold")
+        holdButton.textContent = "HOLD 中"
+    } else {
+        holdButton.classList.remove("hold")
+        holdButton.textContent = "HOLD"
+    }   
+}
 
 </script>
 
