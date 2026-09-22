@@ -40,20 +40,23 @@ def write_server(time_record: TimeRecord) :
             UPDATE 記録 SET リアクション = ?
             WHERE 競技番号=? AND 組=? AND 水路=? and 大会番号=?
             """
+        if time_record.str_time[0:1] == "S":
+            time_record.str_time = "+" + time_record.str_time[1:]
         execute(sql,time_record.str_time,prgNo,kumi,time_record.lane_no,eventNo,
                 fetch="none")
-    if time_record.time_type == TimeType.GOAL:
+    else:
+        if time_record.time_type == TimeType.GOAL:
+            sql = f"""
+                UPDATE 記録 SET ゴール = ?
+                WHERE 競技番号=? AND 組=? AND 水路=? and 大会番号=?
+                """
+            execute(sql,time_record.str_time,prgNo,kumi,time_record.lane_no,eventNo,
+                    fetch="none")
         sql = f"""
-            UPDATE 記録 SET ゴール = ?
-            WHERE 競技番号=? AND 組=? AND 水路=? and 大会番号=?
-            """
-        execute(sql,time_record.str_time,prgNo,kumi,time_record.lane_no,eventNo,
-                fetch="none")
-    sql = f"""
-        UPDATE ラップ SET [{time_record.distance}] = ?
-      WHERE 競技番号=?  AND 組=? AND 水路=? and 大会番号=?
-      """
-    execute(sql, time_record.str_time,prgNo,kumi,time_record.lane_no,eventNo)
+            UPDATE ラップ SET [{time_record.distance}] = ?
+        WHERE 競技番号=?  AND 組=? AND 水路=? and 大会番号=?
+        """
+        execute(sql, time_record.str_time,prgNo,kumi,time_record.lane_no,eventNo)
     print(f"""write_server: prgNo={prgNo}, kumi={kumi}, 
         lane ={time_record.lane_no}, time={time_record.str_time}, 
         distance={time_record.distance}, time_type={time_record.time_type}""")
@@ -165,10 +168,13 @@ last_sent='99:99.9'
 def parse_packet(buf) -> TimeRecord | None:
     global last_sent
     global place
+    print("buf:", buf)
     timer = format_running_time(buf[5:13].decode("ascii"))
+    rtime = buf[8:12].decode("ascii")  # reaction timec
 
     if buf[0:2] == b'AR':
-        timer = timer[:-1]
+        if timer != "    0.00" :
+            timer = timer[:-1]
         if last_sent != timer:
             last_sent = timer
             return TimeRecord(str_time=timer, lane_no=0, 
@@ -178,21 +184,23 @@ def parse_packet(buf) -> TimeRecord | None:
         else:
             return None
 
-
-
     if not (ord('0') <= buf[2] <= ord('9')):
         return None
     lane = buf[2] - ord('0')
+    if buf[13:14] == b'J':
+        return TimeRecord(str_time=rtime, 
+                          lane_no=lane, 
+                          time_type=TimeType.REACTION,
+                          lap_time="",
+                          distance="",
+                          place=0    )
+
 
     this_time = timestr2int(timer)
     lap_time = timeint2str(substract_time(this_time,lasttime[lane]))
     lapcount[lane] += 1
     lasttime[lane]=this_time
     if buf[13:14] == b'G':
-        #this_time = timestr2int(timer)
-        #lap_time = timeint2str(substract_time(this_time,lasttime[lane]))
-        #lapcount[lane] += 1
-        #lasttime[lane]=this_time
         place[lapcount[lane]] +=1
         myplace = place[lapcount[lane]]
         distance = str(race_distance) +"m"
@@ -206,10 +214,6 @@ def parse_packet(buf) -> TimeRecord | None:
 
 
     if buf[13:14] == b'L':
-        #this_time = timestr2int(timer)
-        #lap_time = timeint2str(substract_time(this_time,lasttime[lane]))
-        #lapcount[lane] += 1
-        #lasttime[lane]=this_time
         intdistance = lane_info.lap_unit * lapcount[lane]
         if intdistance < race_distance:
             distance = str(intdistance) + "m"
@@ -221,7 +225,6 @@ def parse_packet(buf) -> TimeRecord | None:
                               lap_time=lap_time,
                               distance=distance,
                               place=myplace    )
-
     return None
 
 
@@ -293,31 +296,36 @@ async def broadcaster():
                           "lane_no": rec.lane_no,
                           "swimmer": str(swimmer_index+1)+ " : " + name})
                     await broadcast(payload)
-        inttime = timestr2int(rec.str_time)
-        if inttime == 0:  # rec.str_time="    0.00" 
+        if rec.str_time == "    0.00" :  # rec.str_time="    0.00" 
             if reset:
                 show_next_race()
                 reset=False
-        else:
-            reset=True
 
         if rec.time_type == TimeType.RUNNING:
             payload = json.dumps({"type": "rt",
               "time": rec.str_time})
             await broadcast(payload)
-        else:
-            if writeFlag :
-                write_server(rec)
-            if rec.time_type == TimeType.GOAL:
-                strdistance="Goal"
-            payload = json.dumps({"type": "lt",
-                  "lane_no":rec.lane_no,
-                  "time": rec.str_time,
-                  "lap_time": rec.lap_time,
-                  "distance": strdistance ,
-                  "place": rec.place})
+            continue
+        if writeFlag :
+            write_server(rec)
+        if rec.time_type == TimeType.REACTION:
+            payload = json.dumps({"type": "re",
+                "lane_no": rec.lane_no,
+                "time": rec.str_time})
             await broadcast(payload)
+            continue
 
+        if rec.time_type == TimeType.GOAL:
+            strdistance="Goal"
+            reset=True
+    
+        payload = json.dumps({"type": "lt",
+            "lane_no":rec.lane_no,
+            "time": rec.str_time,
+            "lap_time": rec.lap_time,
+            "distance": strdistance ,
+            "place": rec.place})
+        await broadcast(payload)
 
 
 @app.on_event("startup")
@@ -336,7 +344,8 @@ ETX = 3
 serial_port = None
 hold = False
 
-
+# format running time string, e.g. "00:12.34" -> "   12.34"
+#         leading zero suppressed, and if the first two digits are zero, they are replaced with spaces.
 def format_running_time(src: str) -> str:
 
     s = list(src)
@@ -360,7 +369,7 @@ def format_running_time(src: str) -> str:
 def serial_thread():
     global hold
 
-    buf = bytearray(17)
+    buf = bytearray(15)
     counter = -1
     while True:
 
@@ -528,8 +537,6 @@ ws.onmessage=(ev)=>{{
     }}
     if(data.type=="lt"){{
         const lane = data.lane_no
-        
-
         const ids = ["time", "lap", "note", "place"]
 
         // 表示更新 + フェードリセット
@@ -590,6 +597,17 @@ ws.onmessage=(ev)=>{{
             }}, 10000)
         }}
     }}
+    if(data.type=="re"){{    
+        const lane = data.lane_no
+        const el = document.getElementById("lap" + lane)
+        el.style.color   = "yellow"
+        el.textContent = data.time
+        setTimeout(() => {{
+            el.textContent = ""
+            el.style.color = ""
+        }}, 10000)
+    }}
+
 }}
 
 </script>
