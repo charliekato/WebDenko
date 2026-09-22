@@ -34,20 +34,29 @@ async def backward():
     except Exception as e:
         print("forward error:" , e)
 
-
-def write_server(lane_no, time, distance, goal) :
-    if goal :
+def write_server(time_record: TimeRecord) :
+    if time_record.time_type == TimeType.REACTION:
+        sql = f"""
+            UPDATE 記録 SET リアクション = ?
+            WHERE 競技番号=? AND 組=? AND 水路=? and 大会番号=?
+            """
+        execute(sql,time_record.str_time,prgNo,kumi,time_record.lane_no,eventNo,
+                fetch="none")
+    if time_record.time_type == TimeType.GOAL:
         sql = f"""
             UPDATE 記録 SET ゴール = ?
             WHERE 競技番号=? AND 組=? AND 水路=? and 大会番号=?
             """
-        execute(sql,time,prgNo,kumi,lane_no,eventNo)
+        execute(sql,time_record.str_time,prgNo,kumi,time_record.lane_no,eventNo,
+                fetch="none")
     sql = f"""
-        UPDATE ラップ SET [{distance}] = ?
-      WHERE 競技番号=?  AND 組=? AND 水路=?　and 大会番号=?
+        UPDATE ラップ SET [{time_record.distance}] = ?
+      WHERE 競技番号=?  AND 組=? AND 水路=? and 大会番号=?
       """
-    execute(sql, time,prgNo,kumi,lane_no,eventNo)
-    print(f"write_server: prgNo={prgNo}, kumi={kumi}, lane ={lane_no}, time={time}, distance={distance}, goal={goal}")
+    execute(sql, time_record.str_time,prgNo,kumi,time_record.lane_no,eventNo)
+    print(f"""write_server: prgNo={prgNo}, kumi={kumi}, 
+        lane ={time_record.lane_no}, time={time_record.str_time}, 
+        distance={time_record.distance}, time_type={time_record.time_type}""")
 
 
 def reset_time():
@@ -82,13 +91,20 @@ def timeint2str(mytime: int) -> str:
         return f"   {seconds:2}.{centiseconds:02}"
 
 # ===== データ =====
+from enum import Enum
+class TimeType(Enum):
+    RUNNING = "R"
+    LAP = "L"
+    GOAL = "G"
+    REACTION = "J"
+    EXCHANGE = "K"  #引継ぎ
+
 
 @dataclass(slots=True)
 class TimeRecord:
     str_time: str
     lane_no: int
-    goal: bool
-    is_running_timer: bool
+    time_type: TimeType
     lap_time: str
     distance: str
     place: int
@@ -146,7 +162,7 @@ def substract_time(current_time: int, last_time: int) -> int:
 
 place = [0]*60
 last_sent='99:99.9'
-def parse_packet(buf):
+def parse_packet(buf) -> TimeRecord | None:
     global last_sent
     global place
     timer = format_running_time(buf[5:13].decode("ascii"))
@@ -155,7 +171,10 @@ def parse_packet(buf):
         timer = timer[:-1]
         if last_sent != timer:
             last_sent = timer
-            return TimeRecord(timer, 0, False, True,"","",0)
+            return TimeRecord(str_time=timer, lane_no=0, 
+                              time_type=TimeType.RUNNING,
+                                lap_time="", 
+                                distance="", place=0)
         else:
             return None
 
@@ -178,7 +197,13 @@ def parse_packet(buf):
         myplace = place[lapcount[lane]]
         distance = str(race_distance) +"m"
 
-        return TimeRecord(timer, lane, True, False,lap_time,distance,myplace)
+        return TimeRecord(str_time=timer, 
+                          lane_no=lane, 
+                          time_type=TimeType.GOAL,
+                          lap_time=lap_time,
+                          distance=distance,
+                          place=myplace)
+
 
     if buf[13:14] == b'L':
         #this_time = timestr2int(timer)
@@ -190,7 +215,12 @@ def parse_packet(buf):
             distance = str(intdistance) + "m"
             place[lapcount[lane]] += 1
             myplace = place[lapcount[lane]]
-            return TimeRecord(timer, lane, False, False,lap_time,distance,myplace)
+            return TimeRecord(str_time=timer, 
+                              lane_no=lane, 
+                              time_type=TimeType.LAP,
+                              lap_time=lap_time,
+                              distance=distance,
+                              place=myplace    )
 
     return None
 
@@ -225,7 +255,6 @@ async def websocket_endpoint(ws: WebSocket):
         connections.remove(ws)
         print("client disconnected")
 
-
 async def broadcast(payload: str):
 
     dead = []
@@ -243,6 +272,7 @@ async def broadcast(payload: str):
 reset=True
 
 async def broadcaster():
+
 
     global reset
     while True:
@@ -271,14 +301,14 @@ async def broadcaster():
         else:
             reset=True
 
-        if rec.is_running_timer:
+        if rec.time_type == TimeType.RUNNING:
             payload = json.dumps({"type": "rt",
               "time": rec.str_time})
             await broadcast(payload)
         else:
             if writeFlag :
-                write_server(rec.lane_no,rec.str_time,strdistance,rec.goal)
-            if rec.goal :
+                write_server(rec)
+            if rec.time_type == TimeType.GOAL:
                 strdistance="Goal"
             payload = json.dumps({"type": "lt",
                   "lane_no":rec.lane_no,
@@ -330,7 +360,7 @@ def format_running_time(src: str) -> str:
 def serial_thread():
     global hold
 
-    buf = bytearray(19)
+    buf = bytearray(17)
     counter = -1
     while True:
 
@@ -344,7 +374,6 @@ def serial_thread():
             elif b == ETX:
                 counter = -1
                 rec = parse_packet(buf)
-                print(buf)
                 if rec:
                     queue.put(rec)
             elif counter >= 0:
