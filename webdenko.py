@@ -18,6 +18,34 @@ import aiohttp
 
 from swlib.select_event import get_event_no
 
+#= データ =====
+from enum import Enum
+class TimeType(Enum):
+    RUNNING = "R"
+    LAP = "L"
+    GOAL = "G"
+    REACTION = "J"
+    EXCHANGE = "K"  #引継ぎ
+
+
+@dataclass(slots=True)
+class TimeRecord:
+    str_time: str
+    lane_no: int
+    time_type: TimeType
+    lap_time: str
+    distance: str
+    place: int
+
+@dataclass(slots=True)
+class LaneInfo:
+    event_name:str
+    zero_use: int
+    lap_unit: int
+    start_lane: int
+    end_lane: int
+
+
 async def forward():
     try:
         async with aiohttp.ClientSession() as session:
@@ -92,33 +120,6 @@ def timeint2str(mytime: int) -> str:
         return f"{minutes:2}:{seconds:02}.{centiseconds:02}"
     else:
         return f"   {seconds:2}.{centiseconds:02}"
-
-# ===== データ =====
-from enum import Enum
-class TimeType(Enum):
-    RUNNING = "R"
-    LAP = "L"
-    GOAL = "G"
-    REACTION = "J"
-    EXCHANGE = "K"  #引継ぎ
-
-
-@dataclass(slots=True)
-class TimeRecord:
-    str_time: str
-    lane_no: int
-    time_type: TimeType
-    lap_time: str
-    distance: str
-    place: int
-
-@dataclass(slots=True)
-class LaneInfo:
-    event_name:str
-    zero_use: int
-    lap_unit: int
-    start_lane: int
-    end_lane: int
 
 def get_lap_unit(touchBoard) -> int :
     if touchBoard == 3:
