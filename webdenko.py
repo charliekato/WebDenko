@@ -410,7 +410,13 @@ async def command(data: dict):
         show_lane_order()
     elif cmd == "h":
         hold = not hold
-    return {"ok": True, "hold": hold}
+    
+    return {
+        "ok": True,
+        "hold": hold,
+        "prgNo": prgNo,
+        "kumi": kumi
+    }
 
 @app.get("/", response_class=HTMLResponse)
 def index():
@@ -656,23 +662,31 @@ button.hold {
     background:red;
     color:white;
 }
+#raceInfo {
+    font-size:50px;
+    margin:20px;
+}
 </style>
 </head>
 <body>
 
 <h1>Race Control</h1>
 
+<div id="raceInfo"> 1 -  1</div>
 <button onclick="sendCommand('p')">← PREV</button>
 <button onclick="sendCommand('n')">NEXT →</button>
 <button id="holdButton" onclick="toggleHold()">HOLD</button>
 <script>
 async function sendCommand(cmd){
 
-    await fetch("/command",{
+    const response = await fetch("/command",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({cmd:cmd})
     })
+    const data = await response.json()
+    document.getElementById("raceInfo").textContent =
+    	data.prgNo + " -  "+data.kumi
 
 }
 async function toggleHold(){
@@ -692,6 +706,20 @@ async function toggleHold(){
     }   
 }
 
+const ws = new WebSocket(
+    (location.protocol === "https:" ? "wss://" : "ws://")
+    + location.host
+    + "/ws"
+)
+
+ws.onmessage = (ev) => {
+    const data = JSON.parse(ev.data)
+
+    if (data.type == "lo") {
+        document.getElementById("raceInfo").textContent =
+             data.prgNo + " -  " + data.kumi 
+    }
+}
 </script>
 
 </body>
@@ -787,7 +815,9 @@ def push_lane_order(flash):
         "type": "lo",
         "header": header ,
         "lanes": lanes,
-        "flash": flash
+        "flash": flash,
+        "prgNo": prgNo,
+        "kumi": kumi
     })
 
     if connections:
@@ -870,7 +900,7 @@ def show_lane_order():
             team = row.team or ""
             name = row.sname or ""
         else:
-            name = row.team or ""
+            name = row.sname or ""
             team = "1 : " + (row.swimmer1 or "")
             
         if row.mark:
@@ -897,8 +927,6 @@ reset_time()
 
 tree = ET.parse("webdenko.config")
 root = tree.getroot()
-server = root.find("Server").text
-password = root.find("Password").text
 connectionStr = root.find("connectionStr").text
 serialPort = root.find("serialPort").text
 writeFlagText = root.find("write_server").text
@@ -915,13 +943,14 @@ print( repr(connectionStr) )
 
 eventNo = get_event_no(connectionStr)
 print("\033[2J\033[H", end="")
-serial_port = serial.Serial(
-    port=serialPort,
-    baudrate=9600,
-    parity=serial.PARITY_EVEN,
-    bytesize=7,
-    timeout=None
-)
+if serialPort!="None":
+    serial_port = serial.Serial(
+        port=serialPort,
+        baudrate=9600,
+        parity=serial.PARITY_EVEN,
+        bytesize=7,
+        timeout=None
+    )
 
 
 def main():
@@ -931,8 +960,9 @@ def main():
 
            
     # screen clear
-    t = threading.Thread(target=serial_thread, daemon=True)
-    t.start()
+    if serialPort != "None":
+        t = threading.Thread(target=serial_thread, daemon=True)
+        t.start()
     lane_info=get_lane_info(eventNo)
     show_lane_order()
 
