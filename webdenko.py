@@ -328,7 +328,8 @@ async def broadcaster():
                     await broadcast(payload)
         if rec.str_time == "    0.00" :  # rec.str_time="    0.00" 
             if reset:
-                show_next_race()
+                if show_next_race():
+                    await push_lane_order_async(True)
                 reset=False
 
         if rec.time_type == TimeType.RUNNING:
@@ -433,7 +434,8 @@ async def command(data: dict):
     global hold
     cmd = data["cmd"]
     if cmd == "n":
-        show_next_race()
+        if show_next_race():
+            push_lane_order(True)
     elif cmd == "p":
         show_prev_race()
     elif cmd == "r":
@@ -652,18 +654,6 @@ ws.onmessage=(ev)=>{{
 </html>
 """
 
-#@app.get("/control/p")
-#async def show_prev():
-#    show_prev_race()
-#    ##-- send prev command to seiko swimv6
-#    await backward()
-
-#@app.get("/control/n")
-#async def show_next():
-#    show_next_race()
-#    ##-- send next command to seiko swimv6
-#    await forward()
-
 
 @app.get("/control", response_class=HTMLResponse)
 def control():
@@ -837,6 +827,20 @@ def race_exist(prgNo,kumi,eventNo) -> bool:
     return False
 
 
+async def push_lane_order_async(flash):
+    (header, lanes) = show_lane_order()
+
+    payload = json.dumps({
+        "type": "lo",
+        "header": header,
+        "lanes": lanes,
+        "flash": flash,
+        "prgNo": prgNo,
+        "kumi": kumi
+    })
+
+    await broadcast(payload)
+
 def push_lane_order(flash):
 
     (header, lanes) = show_lane_order()
@@ -874,9 +878,11 @@ def show_next_race():
     rc,prgNo,kumi= get_next_race(prgNo,kumi,eventNo)
     if  rc:
         reset_time()
+        return True
         push_lane_order(True)
     else:
         print("最終のレースです。")
+        return False
 
 race_distance=100
 swimmers = [None]*11
