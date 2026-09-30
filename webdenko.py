@@ -62,7 +62,36 @@ async def backward():
     except Exception as e:
         print("forward error:" , e)
 
+def get_last_occupied_lane(prgNo, kumi, eventNo) -> int:
+    sql = """
+	SELECT MAX(水路) as MaxLane
+	 FROM v記録 WHERE 組=? AND 表示用競技番号=?
+	 AND 選手番号>0  AND 大会番号=?
+	 """
+    execute(sql,eventNo, prgNumber,fetch="one")
+    return row[0] if row else 0
+def get_first_occupied_lane(prgNo, kumi, eventNo) -> int:
+    sql = """
+	SELECT MIN(水路) as MinLane
+	 FROM v記録 WHERE 組=? AND 表示用競技番号=?
+	 AND 選手番号>0  AND 大会番号=?
+	 """
+    execute(sql,eventNo, prgNumber,fetch="one")
+    return row[0] if row else 0
+
+
+
+def get_UID_from_prgNo(prgNo, eventNo) -> int:
+    sql = """
+    	SELECT 競技番号 from プログラム 
+	  WHERE 大会番号=? 
+	  AND 表示用競技番号=?
+	  """
+    execute(sql,eventNo, prgNo,fetch="one")
+    return row[0] if row else 0
+
 def write_server(time_record: TimeRecord) :
+    uid = get_UID_from_prgNo(prgNo,eventNo)
     if time_record.time_type == TimeType.REACTION:
         sql = f"""
             UPDATE 記録 SET リアクション = ?
@@ -70,7 +99,7 @@ def write_server(time_record: TimeRecord) :
             """
         if time_record.str_time[0:1] == "S":
             time_record.str_time = "+" + time_record.str_time[1:]
-        execute(sql,time_record.str_time,prgNo,kumi,time_record.lane_no,eventNo,
+        execute(sql,time_record.str_time,uid,kumi,time_record.lane_no,eventNo,
                 fetch="none")
     else:
         if time_record.time_type == TimeType.GOAL:
@@ -78,13 +107,13 @@ def write_server(time_record: TimeRecord) :
                 UPDATE 記録 SET ゴール = ?
                 WHERE 競技番号=? AND 組=? AND 水路=? and 大会番号=?
                 """
-            execute(sql,time_record.str_time,prgNo,kumi,time_record.lane_no,eventNo,
+            execute(sql,time_record.str_time,uid,kumi,time_record.lane_no,eventNo,
                     fetch="none")
         sql = f"""
             UPDATE ラップ SET [{time_record.distance}] = ?
         WHERE 競技番号=?  AND 組=? AND 水路=? and 大会番号=?
         """
-        execute(sql, time_record.str_time,prgNo,kumi,time_record.lane_no,eventNo)
+        execute(sql, time_record.str_time,uid,kumi,time_record.lane_no,eventNo)
     print(f"""write_server: prgNo={prgNo}, kumi={kumi}, 
         lane ={time_record.lane_no}, time={time_record.str_time}, 
         distance={time_record.distance}, time_type={time_record.time_type}""")
@@ -623,17 +652,17 @@ ws.onmessage=(ev)=>{{
 </html>
 """
 
-@app.get("/control/p")
-async def show_prev():
-    show_prev_race()
-    ##-- send prev command to seiko swimv6
-    await backward()
+#@app.get("/control/p")
+#async def show_prev():
+#    show_prev_race()
+#    ##-- send prev command to seiko swimv6
+#    await backward()
 
-@app.get("/control/n")
-async def show_next():
-    show_next_race()
-    ##-- send next command to seiko swimv6
-    await forward()
+#@app.get("/control/n")
+#async def show_next():
+#    show_next_race()
+#    ##-- send next command to seiko swimv6
+#    await forward()
 
 
 @app.get("/control", response_class=HTMLResponse)
@@ -740,7 +769,7 @@ def execute(sql, *params, fetch="none"):
 
         conn.commit()
 
-def get_max_kumi():   
+def get_max_kumi(prgNo, eventNo):   
     row = execute("""
         select max(組)
         from v記録
@@ -749,7 +778,7 @@ def get_max_kumi():
         """, eventNo,prgNo,fetch="one")
     return row[0] if row else 0
 
-def get_max_prgno():
+def get_max_prgno(eventNo):
 
     row = execute("""
         select max(表示用競技番号)
@@ -759,37 +788,37 @@ def get_max_prgno():
 
     return row[0] if row else None
 
-def get_prev_race():
-    global kumi
-    global prgNo
+def get_prev_race(prgNo,kumi,eventNo) -> tuple[int,int]:
+    orgprgNo = prgNo
+    orgkumi = kumi
     while kumi>1:
         kumi -= 1
-        if race_exist():
-            return True
+        if race_exist(prgNo,kumi,eventNo):
+            return  True,prgNo, kumi
     while prgNo>1:
         prgNo -= 1
-        kumi = get_max_kumi()
-        if race_exist():
-            return True
-    return False
+        kumi = get_max_kumi(prgNo, kumi)
+        if race_exist(prgNo,kumi,eventNo):
+            return  True,prgNo, kumi
+    return  False,orgprgNo,orgkumi
 
-def get_next_race():   
-    global kumi
-    global prgNo
-    while kumi<get_max_kumi():
+def get_next_race(prgNo, kumi,eventNo) -> tuple[bool,int,int]:   
+    orgprgNo = prgNo
+    orgkumi = kumi
+    while kumi<get_max_kumi(prgNo,eventNo):
         kumi += 1 
-        if race_exist():
-            return True
+        if race_exist(prgNo,kumi,eventNo):
+            return  True, prgNo, kumi
     kumi=1
-    maxprgno = get_max_prgno()
+    maxprgno = get_max_prgno(eventNo)
     while prgNo<maxprgno:
         prgNo += 1
-        if race_exist():
-            return True
-    return False
+        if race_exist(prgNo,kumi,eventNo):
+            return  True,prgNo, kumi
+    return False, orgprgNo,orgkumi
 
 
-def race_exist():
+def race_exist(prgNo,kumi,eventNo) -> bool:
     rows = execute("""
         select 
           選手番号 as swimmerid,
@@ -828,7 +857,10 @@ def push_lane_order(flash):
         )
 
 def show_prev_race():
-    if get_prev_race():
+    global prgNo
+    global kumi
+    rc,prgNo,kumi= get_prev_race(prgNo,kumi,eventNo)
+    if rc:
         reset_time()
         push_lane_order(True)
     else:
@@ -837,7 +869,10 @@ def show_prev_race():
 
 
 def show_next_race():
-    if get_next_race():
+    global prgNo
+    global kumi
+    rc,prgNo,kumi= get_next_race(prgNo,kumi,eventNo)
+    if  rc:
         reset_time()
         push_lane_order(True)
     else:
