@@ -63,20 +63,22 @@ async def backward():
         print("forward error:" , e)
 
 def get_last_occupied_lane(prgNo, kumi, eventNo) -> int:
+    uid = get_UID_from_prgNo(prgNo,eventNo)
     sql = """
 	SELECT MAX(水路) as MaxLane
-	 FROM v記録 WHERE 組=? AND 表示用競技番号=?
+	 FROM 記録 WHERE 組=? AND 競技番号=?
 	 AND 選手番号>0  AND 大会番号=?
 	 """
-    execute(sql,eventNo, prgNumber,fetch="one")
+    row=execute(sql,kumi, uid,eventNo,fetch="one")
     return row[0] if row else 0
 def get_first_occupied_lane(prgNo, kumi, eventNo) -> int:
+    uid = get_UID_from_prgNo(prgNo,eventNo)
     sql = """
 	SELECT MIN(水路) as MinLane
-	 FROM v記録 WHERE 組=? AND 表示用競技番号=?
+	 FROM 記録 WHERE 組=? AND 競技番号=?
 	 AND 選手番号>0  AND 大会番号=?
 	 """
-    execute(sql,eventNo, prgNumber,fetch="one")
+    row=execute(sql,kumi, uid,eventNo, fetch="one")
     return row[0] if row else 0
 
 
@@ -87,34 +89,44 @@ def get_UID_from_prgNo(prgNo, eventNo) -> int:
 	  WHERE 大会番号=? 
 	  AND 表示用競技番号=?
 	  """
-    execute(sql,eventNo, prgNo,fetch="one")
+    row=execute(sql,eventNo, prgNo,fetch="one")
     return row[0] if row else 0
 
 def write_server(time_record: TimeRecord) :
-    uid = get_UID_from_prgNo(prgNo,eventNo)
+    sql = f"""
+            Select 競技番号 as PRGNO, 組 as KUMI from 記録 
+            Where 予備='C' And 水路=? and 大会番号=? and 選手番号>0
+	    """
+    row = execute(sql, time_record.lane_no,eventNo, fetch="one")
+    affected_prgNo = row.PRGNO if row else 0
+    affected_kumi = row.KUMI if row else 0
     if time_record.time_type == TimeType.REACTION:
         sql = f"""
-            UPDATE 記録 SET リアクション = ?
-            WHERE 競技番号=? AND 組=? AND 水路=? and 大会番号=?
-            """
-        if time_record.str_time[0:1] == "S":
-            time_record.str_time = "+" + time_record.str_time[1:]
-        execute(sql,time_record.str_time,uid,kumi,time_record.lane_no,eventNo,
+                UPDATE 記録 SET リアクション = ?
+                WHERE 予備='C' AND 水路=? and 大会番号=?
+                """
+        reaction_time = time_record.str_time
+        if reaction_time[0:1] == "S":
+            reaction_time =  + time_record.str_time[1:]
+        execute(sql,reaction_time,time_record.lane_no,eventNo,
                 fetch="none")
     else:
         if time_record.time_type == TimeType.GOAL:
             sql = f"""
                 UPDATE 記録 SET ゴール = ?
-                WHERE 競技番号=? AND 組=? AND 水路=? and 大会番号=?
+                WHERE 予備='C' AND 水路=? and 大会番号=?
                 """
-            execute(sql,time_record.str_time,uid,kumi,time_record.lane_no,eventNo,
+            execute(sql,time_record.str_time,time_record.lane_no,eventNo,
                     fetch="none")
-        sql = f"""
-            UPDATE ラップ SET [{time_record.distance}] = ?
-        WHERE 競技番号=?  AND 組=? AND 水路=? and 大会番号=?
-        """
-        execute(sql, time_record.str_time,uid,kumi,time_record.lane_no,eventNo)
-    print(f"""write_server: prgNo={prgNo}, kumi={kumi}, 
+        if affected_prgNo>0 :
+            print(f">>>>>>>>>!!!!!!!!!!!>>>>>> {time_record.distance} <<<<<")
+            sql = f"""
+                    UPDATE ラップ SET [{time_record.distance}] = ?
+                WHERE 競技番号=?  AND 組=? AND 水路=? and 大会番号=?
+                """
+            execute(sql, time_record.str_time,affected_prgNo,affected_kumi, \
+            time_record.lane_no,eventNo, fetch="none")
+    print(f"""write_server: prgNo={affected_prgNo}, kumi={affected_kumi}, 
         lane ={time_record.lane_no}, time={time_record.str_time}, 
         distance={time_record.distance}, time_type={time_record.time_type}""")
 
@@ -437,9 +449,8 @@ async def command(data: dict):
         if show_next_race():
             push_lane_order(True)
     elif cmd == "p":
-        show_prev_race()
-    elif cmd == "r":
-        show_lane_order()
+        if show_prev_race():
+            push_lane_order(True)
     elif cmd == "h":
         hold = not hold
     
@@ -806,7 +817,24 @@ def get_next_race(prgNo, kumi,eventNo) -> tuple[bool,int,int]:
         if race_exist(prgNo,kumi,eventNo):
             return  True,prgNo, kumi
     return False, orgprgNo,orgkumi
+def can_go_with_prev(prgNo, kumi, eventNo) -> tuple[bool, int, int]:
+    rc, prevPrgNo, prevKumi = get_prev_race(prgNo, kumi,eventNo)
+    if rc :
+        last_lane=get_last_occupied_lane(prevPrgNo, prevKumi, eventNo)
+        first_lane=get_first_occupied_lane(PrgNo, kumi,eventNo)
+        if first_lane>last_lane:
+            return True, prevPrgNo, prevKumi
+    return False, prgNo, kumi
 
+
+def can_go_with_next(prgNo, kumi, eventNo) -> tuple[bool, int, int]:
+    rc, nextPrgNo, nextKumi = get_next_race(prgNo, kumi,eventNo)
+    if rc :
+        last_lane=get_last_occupied_lane(prgNo, kumi, eventNo)
+        first_lane=get_first_occupied_lane(nextPrgNo, nextKumi,eventNo)
+        if first_lane>last_lane:
+            return True, nextPrgNo, nextKumi
+    return False, prgNo, kumi
 
 def race_exist(prgNo,kumi,eventNo) -> bool:
     rows = execute("""
@@ -866,20 +894,22 @@ def show_prev_race():
     rc,prgNo,kumi= get_prev_race(prgNo,kumi,eventNo)
     if rc:
         reset_time()
-        push_lane_order(True)
+        return True
     else:
         print("最初のレースです。")
+
 
 
 
 def show_next_race():
     global prgNo
     global kumi
+    prgNo=endprgNo
+    kumi=endkumi
     rc,prgNo,kumi= get_next_race(prgNo,kumi,eventNo)
     if  rc:
         reset_time()
         return True
-        push_lane_order(True)
     else:
         print("最終のレースです。")
         return False
@@ -888,45 +918,75 @@ race_distance=100
 swimmers = [None]*11
 relay_flag = False
 
+def set_current_race():
+    global endprgNo, endkumi
+    endprgNo=prgNo
+    endkumi=kumi
+    while True:
+        uid=get_UID_from_prgNo(endprgNo,eventNo)
+        sql = """UPDATE 記録 SET 予備='C'
+           WHERE 競技番号=? AND 組=? AND 大会番号=?"""
+        execute(sql,uid,endkumi,eventNo, fetch="none")
+        rc,endprgNo,endkumi= can_go_with_next(endprgNo,endkumi,eventNo)
+
+        if not rc:
+            break
+def reset_current_race():
+    sql= """UPDATE 記録 SET 予備='' 
+         WHERE 予備='C'"""
+    execute(sql,fetch="none")
+
+
+
 def show_lane_order():
     global race_distance
     global relay_flag
     global swimmers
+    reset_current_race()
+    set_current_race()
+
     swimmers = [None]*11
-    rows = execute("""
-         select 
-           距離 as distance,
-           種目 as stroke,
-           種目コード as strokecode,
-           予決 as phase,
-           クラス名称 as className,
-           性別 as gender,
-           水路 as lane,
-           MAXLANE,
-           氏名 as sname,
-           第１泳者 as swimmer1,
-           第２泳者 as swimmer2,
-           第３泳者 as swimmer3,
-           第４泳者 as swimmer4,
-           所属名 as team,
-           ゴール as goal,
-           棄権印刷マーク as mark
-         from v記録
-           where 大会番号= ?
-            and  表示用競技番号 = ?
-            and  組 = ?
-          """, eventNo, prgNo, kumi,fetch="all")
-    
+
     lanes = []
+    rows = execute("""
+	 select 
+	   距離 as distance,
+	   種目 as stroke,
+	   種目コード as strokecode,
+	   予決 as phase,
+	   クラス名称 as className,
+	   性別 as gender,
+	   水路 as lane,
+	   MAXLANE,
+	   氏名 as sname,
+	   第１泳者 as swimmer1,
+	   第２泳者 as swimmer2,
+	   第３泳者 as swimmer3,
+	   第４泳者 as swimmer4,
+	   所属名 as team,
+	   ゴール as goal,
+	   棄権印刷マーク as mark
+	 from v記録
+	   where 大会番号= ?
+	    and  予備 = 'C'
+	  """, eventNo,  fetch="all")
+    
     first = True
+    godo = False
     for row in rows:
         if first:
             relay_flag = row.strokecode >5
             distance = row.distance
+            gender = row.gender
+            className = row.className
+            stroke = row.stroke
             race_distance = int(distance[:-1])
-            header =  str(prgNo) + "  "   +\
-                    row.gender + row.className + distance + row.stroke + \
-                    " " + row.phase +" "+ str(kumi) + "組"
+            if prgNo == endprgNo:
+                header =  str(prgNo) + "  "   +\
+                gender + className + distance + stroke + \
+                " " + row.phase +" "+ str(kumi) + "組"
+            else:
+                godo=True
             first=False
         swimmers[row.lane] = [
             row.swimmer1 or "",
@@ -934,7 +994,14 @@ def show_lane_order():
             row.swimmer3 or "",
             row.swimmer4 or "",
             ]
-
+        if godo:
+            if gender != row.gender:
+                gender=""
+            if stroke != row.stroke:
+                stroke = ""
+            if className != row.className:
+                className = ""
+        
         lane = row.lane - lane_info.zero_use
         if lane>9 :
             continue
@@ -956,8 +1023,10 @@ def show_lane_order():
             "team": team,
             "time": goal
         })
-            
-    
+    if godo:
+        header = gender + className + distance + stroke + \
+	    " " + row.phase +" 合同レース"
+	
     return header, lanes
 
 
@@ -971,14 +1040,9 @@ tree = ET.parse("webdenko.config")
 root = tree.getroot()
 connectionStr = root.find("connectionStr").text
 serialPort = root.find("serialPort").text
-writeFlagText = root.find("write_server").text
-writeFlag = False
-if writeFlagText=="yes" :
-    writeFlag = True
-if writeFlagText=="true" :
-    writeFlag = True
-if writeFlagText=="on" :
-    writeFlag = True
+writeFlag = root.find("write_server").text.strip().lower()  in  {
+	"yes", "true", "on", "enable", "1" 
+	}
 
 
 print( repr(connectionStr) )
