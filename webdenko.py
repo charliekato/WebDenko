@@ -798,7 +798,7 @@ def get_prev_race(prgNo,kumi,eventNo) -> tuple[int,int]:
             return  True,prgNo, kumi
     while prgNo>1:
         prgNo -= 1
-        kumi = get_max_kumi(prgNo, kumi)
+        kumi = get_max_kumi(prgNo, eventNo)
         if race_exist(prgNo,kumi,eventNo):
             return  True,prgNo, kumi
     return  False,orgprgNo,orgkumi
