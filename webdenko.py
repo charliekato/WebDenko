@@ -27,7 +27,6 @@ class TimeType(Enum):
     REACTION = "J"
     EXCHANGE = "K"  #引継ぎ
 
-
 @dataclass(slots=True)
 class TimeRecord:
     str_time: str
@@ -92,11 +91,31 @@ def get_UID_from_prgNo(prgNo, eventNo) -> int:
     row=execute(sql,eventNo, prgNo,fetch="one")
     return row[0] if row else 0
 
+def check_if_no_data(laneNo, dtype) -> bool:
+    sql = f"""
+        SELECT {dtype}  from 記録
+        WHERE 大会番号=? and 予備='C' and 水路=?
+    """
+ 
+    row=execute(sql,  eventNo, laneNo, fetch="one")
+    if row:
+        return True if row[0]=="" else False
+    return True
+
+def check_if_no_lap_data(prgNo, kumi, laneNo, distance) -> bool:
+    sql = f"""
+        SELECT {distance} as DIST FROM ラップ
+        WHERE 大会番号=? and 競技番号=? and 組=? and 水路=?
+        """
+    row=execute(sql,  eventNo, prgNo, kumi, laneNo, fetch="one")
+    return True if row.DIST=="" else False
+
+
 def write_server(time_record: TimeRecord) :
     sql = f"""
-            Select 競技番号 as PRGNO, 組 as KUMI from 記録 
-            Where 予備='C' And 水路=? and 大会番号=? and 選手番号>0
-	    """
+        Select 競技番号 as PRGNO, 組 as KUMI from 記録 
+        Where 予備='C' And 水路=? and 大会番号=? and 選手番号>0
+    """
     row = execute(sql, time_record.lane_no,eventNo, fetch="one")
     affected_prgNo = row.PRGNO if row else 0
     affected_kumi = row.KUMI if row else 0
@@ -110,6 +129,7 @@ def write_server(time_record: TimeRecord) :
             reaction_time =  + time_record.str_time[1:]
         execute(sql,reaction_time,time_record.lane_no,eventNo,
                 fetch="none")
+        written=True
     else:
         if time_record.time_type == TimeType.GOAL:
             sql = f"""
@@ -117,18 +137,20 @@ def write_server(time_record: TimeRecord) :
                 WHERE 予備='C' AND 水路=? and 大会番号=?
                 """
             execute(sql,time_record.str_time,time_record.lane_no,eventNo,
-                    fetch="none")
+                fetch="none")
+            written=True
         if affected_prgNo>0 :
-            print(f">>>>>>>>>!!!!!!!!!!!>>>>>> {time_record.distance} <<<<<")
+            dist= f"[{time_record.distance}]"
             sql = f"""
-                    UPDATE ラップ SET [{time_record.distance}] = ?
+                UPDATE ラップ SET {dist} = ?
                 WHERE 競技番号=?  AND 組=? AND 水路=? and 大会番号=?
-                """
-            execute(sql, time_record.str_time,affected_prgNo,affected_kumi, \
-            time_record.lane_no,eventNo, fetch="none")
+            """
+            execute(sql,  time_record.str_time,affected_prgNo,affected_kumi, \
+                time_record.lane_no,eventNo, fetch="none")
+            written=True
     print(f"""write_server: prgNo={affected_prgNo}, kumi={affected_kumi}, 
-        lane ={time_record.lane_no}, time={time_record.str_time}, 
-        distance={time_record.distance}, time_type={time_record.time_type}""")
+    lane ={time_record.lane_no}, time={time_record.str_time}, 
+    distance={time_record.distance}, time_type={time_record.time_type}""")
 
 
 def reset_time():
@@ -349,26 +371,30 @@ async def broadcaster():
               "time": rec.str_time})
             await broadcast(payload)
             continue
-        if writeFlag :
-            write_server(rec)
         if rec.time_type == TimeType.REACTION:
-            payload = json.dumps({"type": "re",
-                "lane_no": rec.lane_no,
-                "time": rec.str_time})
-            await broadcast(payload)
-            continue
+            if check_if_no_data(rec.lane_no, "ゴール") :
+                payload = json.dumps({"type": "re",
+                    "lane_no": rec.lane_no,
+                    "time": rec.str_time})
+                await broadcast(payload)
+                if writeFlag :
+                    write_server(rec)
+                continue
 
         if rec.time_type == TimeType.GOAL:
             strdistance="Goal"
             reset=True
     
-        payload = json.dumps({"type": "lt",
-            "lane_no":rec.lane_no,
-            "time": rec.str_time,
-            "lap_time": rec.lap_time,
-            "distance": strdistance ,
-            "place": rec.place})
-        await broadcast(payload)
+        if check_if_no_data(rec.lane_no, "ゴール") :
+            payload = json.dumps({"type": "lt",
+                "lane_no":rec.lane_no,
+                "time": rec.str_time,
+                "lap_time": rec.lap_time,
+                "distance": strdistance ,
+                "place": rec.place})
+            await broadcast(payload)
+            if writeFlag :
+                write_server(rec)
 
 
 @app.on_event("startup")
@@ -575,6 +601,7 @@ ws.onmessage=(ev)=>{{
         data.lanes.forEach(lane=>{{
             document.getElementById("name"+lane.lane).textContent = lane.name
             document.getElementById("team"+lane.lane).textContent = lane.team
+            document.getElementById("time"+lane.lane).textContent = lane.time
         }})
 
         return
