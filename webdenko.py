@@ -548,14 +548,15 @@ for(let i = STARTLANE; i < ENDLANE+1; i++) {{
   const tr=document.createElement("tr")
 
   tr.innerHTML=
-  `<td width="5%">${{i}}</td>
-  <td width="20%" id="name${{i}}"></td>
-  <td width="29%" id="team${{i}}"></td>
-  <td width="11%" align="right" id="lap${{i}}" ></td>
-  <td width="14%" align="right" id="time${{i}}"></td>
+  `<td width="4%">${{i}}</td>
+  <td width="18%" id="name${{i}}"></td>
+  <td width="20%" id="team${{i}}"></td>
+  <td width="18%" id="myclass${{i}}"></td>
+  <td width="10%" align="right" id="lap${{i}}" ></td>
+  <td width="12%" align="right" id="time${{i}}"></td>
   <td width="10%" align="right" id="note${{i}}"></td>
-  <td width="7%" align="right" id="place${{i}}"></td>
-  <td width="4%" id="padding${{i}}"></td>
+  <td width="5%" align="right" id="place${{i}}"></td>
+  <td width="2%" id="padding${{i}}"></td>
 
   `
 
@@ -574,6 +575,7 @@ function clearLaneOrder() {{
     for (let i=STARTLANE;i<ENDLANE+1;i++) {{
         document.getElementById("name"+i).textContent = "";
         document.getElementById("team"+i).textContent = "";
+        document.getElementById("myclass"+i).textContent = "";
     }}
 }}
 
@@ -602,6 +604,7 @@ ws.onmessage=(ev)=>{{
             document.getElementById("name"+lane.lane).textContent = lane.name
             document.getElementById("team"+lane.lane).textContent = lane.team
             document.getElementById("time"+lane.lane).textContent = lane.time
+            document.getElementById("myclass"+lane.lane).textContent = lane.myclass
         }})
 
         return
@@ -1007,16 +1010,17 @@ def show_lane_order():
             relay_flag = row.strokecode >5
             distance = row.distance
             gender = row.gender
-            className = row.className
+            #className = row.className
             stroke = row.stroke
             race_distance = int(distance[:-1])
             if prgNo == endprgNo:
                 header =  str(prgNo) + "  "   +\
-                gender + className + distance + stroke + \
+                gender +  distance + stroke + \
                 " " + row.phase +" "+ str(kumi) + "組"
             else:
                 godo=True
             first=False
+        myclass=row.className
         swimmers[row.lane] = [
             row.swimmer1 or "",
             row.swimmer2 or "",
@@ -1028,8 +1032,6 @@ def show_lane_order():
                 gender=""
             if stroke != row.stroke:
                 stroke = ""
-            if className != row.className:
-                className = ""
         
         lane = row.lane - lane_info.zero_use
         if lane>9 :
@@ -1050,10 +1052,11 @@ def show_lane_order():
             "lane": lane,
             "name": name,
             "team": team,
-            "time": goal
+            "time": goal,
+            "myclass" : myclass
         })
     if godo:
-        header = gender + className + distance + stroke + \
+        header = gender + distance + stroke + \
 	    " " + row.phase +" 合同レース"
 	
     return header, lanes
