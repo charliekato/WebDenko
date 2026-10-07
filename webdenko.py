@@ -501,7 +501,7 @@ def index():
 body{{
 background:black;
 color:white;
-font-size:35px;
+font-size:{fontSize};
 font-family:monospace;
 }}
 #timer{{
@@ -1075,6 +1075,7 @@ serialPort = root.find("serialPort").text
 writeFlag = root.find("write_server").text.strip().lower()  in  {
 	"yes", "true", "on", "enable", "1" 
 	}
+fontSize = root.find("fontSize").text
 
 
 print( repr(connectionStr) )
