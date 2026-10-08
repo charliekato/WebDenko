@@ -588,6 +588,17 @@ const ws=new WebSocket(
 
 
 
+ws.onclose = () => {{
+    console.log("WebSocket disconnected. Reloading...");
+    setTimeout(() => {{
+        location.reload();
+    }}, 3000);
+}}
+
+ws.onerror = () => {{
+    ws.close();
+}}
+
 ws.onmessage=(ev)=>{{
 
     const data=JSON.parse(ev.data)
@@ -774,6 +785,17 @@ const ws = new WebSocket(
     + location.host
     + "/ws"
 )
+
+ws.onclose = () => {
+    console.log("WebSocket disconnected. Reloading...");
+    setTimeout(() => {
+        location.reload();
+    }, 3000);
+}
+
+ws.onerror = () => {
+    ws.close();
+}
 
 ws.onmessage = (ev) => {
     const data = JSON.parse(ev.data)
