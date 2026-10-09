@@ -20,11 +20,30 @@
 
    fontSize :   web の font size
 
+
 -->
+<!-- localhost のSQLserver にwindows認証で接続し、serial Port は使用しない設定例-->
 <ApplicationConfig>
     <serialPort>None</serialPort>
     <write_server>No</write_server>
     <connectionStr>DRIVER={ODBC Driver 18 for SQL Server};SERVER=localhost;
                 DATABASE=sw;Trusted_Connection=yes;TrustServerCertificate=yes;</connectionStr>
-            <fontSize>25px</fontSize>
+    <fontSize>25px</fontSize>
 </ApplicationConfig>
+
+<!-- remote のSQLserver にsql server 認証で接続し、serial Port はCOM5を使用する設定例
+草津のserverに接続する場合はこうなる。
+madoka に接続する場合は server\SQLEXPRESS を madoka.local\SQLEXPRESSにする。 
+
+<ApplicationConfig>
+    <serialPort>None</serialPort>
+    <write_server>No</write_server>
+    <connectionStr>
+　　　　DRIVER={ODBC Driver 18 for SQL Server};SERVER=server\SQLEXPRESS;UID=sw;
+                DATABASE=sw;PWD=;TrustServerCertificate=yes;
+    </connectionStr>
+    <fontSize>25px</fontSize>
+</ApplicationConfig>
+
+-->
+
