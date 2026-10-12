@@ -259,6 +259,14 @@ def parse_packet(buf) -> TimeRecord | None:
                           distance="",
                           place=0    )
 
+    if buf[13:14] == b'K':
+        return None # 引継ぎ　とりあえず何もしない。
+    #    return TimeRecord(str_time=rtime,
+    #                      lane_no=lane,
+    #                      time_type=TimeType.EXCHANGE,
+    #                      lap_time="",
+    #                      distance=""
+    #                      place=0 )
 
     this_time = timestr2int(timer)
     lap_time = timeint2str(substract_time(this_time,lasttime[lane]))
