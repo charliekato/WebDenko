@@ -16,18 +16,27 @@ else :
     port_name = sys.argv[1]
 print(f"Using Serial Port: {port_name}")
 
-ser = serial.Serial(
-    port=port_name,
-    baudrate=9600,
-    parity=serial.PARITY_EVEN,
-    bytesize=serial.SEVENBITS,
-    timeout=None
-)
+while True:
+    try:
+        ser = serial.Serial(
+            port=port_name,
+            baudrate=9600,
+            parity=serial.PARITY_EVEN,
+            bytesize=serial.SEVENBITS,
+            timeout=None
+        )
+        print(f"Serial port opened: {port_name}")
+        break
+    except serial.SerialException as e:
+        print(f"Serial port not available: {port_name}")
+        print("Waiting for USB serial device.")
+        time.sleep(5)
 
 # ===== タイマー状態 =====
 running = False
 elapsed_base = 0.0
 start_time = time.time()
+reset_pending = False
 lock = threading.Lock()
 
 # ===== FastAPI =====
@@ -152,11 +161,12 @@ def start_timer():
 
 @app.get("/reset")
 def reset_timer():
-    global running, elapsed_base, start_time
+    global running, elapsed_base, start_time, reset_pending
     with lock:
         elapsed_base = 0.0
         start_time = time.time()
         running = False
+        reset_pending = True
     return {"status": "reset", "time": "00:00.00"}
 
 @app.get("/status")
@@ -173,7 +183,7 @@ def status():
 
 # ===== シリアル送信ループ =====
 def serial_loop():
-    global running, elapsed_base
+    global running, elapsed_base, reset_pending
     oldtenth = 0
 
     reactionlane=0
@@ -188,7 +198,30 @@ def serial_loop():
         seconds = int(elapsed % 60)
         tenth = int((elapsed * 10) % 10)
         hundred = int((elapsed * 100 ) % 10)
-        if tenth != oldtenth:
+        if reset_pending:
+            with lock:
+                reset_pending = False
+            frame = bytearray(16)
+            frame[0] = 0x02
+            frame[1] = ord('A')
+            frame[2] = ord('R')
+            frame[3] = 0x20
+            frame[4] = 0x20
+            frame[5] = 0x20
+            frame[6] = 0x20
+            frame[7] = 0x20
+            frame[8] = 0x20
+            frame[9] = 0x20
+            frame[10]= ord('0')
+            frame[11]= ord('.')
+            frame[12]= ord('0')
+            frame[13]= ord('0')
+            frame[14]= 0x20
+            frame[15]= 0x03
+            ser.write(frame)
+            print("Reset:", frame)
+
+        elif tenth != oldtenth:
             oldtenth=tenth
             frame = bytearray(16)
 
