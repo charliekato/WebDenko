@@ -181,141 +181,92 @@ def status():
         "elapsed_sec": round(elapsed, 2)
     }
 
+def send_lap(lane,mytime,order):
+    ser.write(bytearray(f"\x02A{order}{lane}{order} ","ascii")+mytime+bytearray("L\x03","ascii"))
+
+def send_goal(lane,mytime,order):
+    ser.write(bytearray(f"\x02A{order}{lane}{order} ","ascii")+mytime+bytearray("G\x03","ascii"))
+
+def send_reset():
+    ser.write(bytearray("\x02AR       0.00 \x03","ascii"))
+
+def send_exchange(lane):
+    ser.write(bytearray(f"\x02A0{lane}02 0-0.00 K\x03","ascii"))
+
+
+def send_running_timer(time):
+    ser.write(bytearray(f"\x02AR   ","ascii") + time + bytearray("  \x03","ascii"))
+
+def send_reaction(lane):
+    ser.write(bytearray(f"\x02A{lane}  S0S0.59 J\x03","ascii"))
+
+
+oldtenth = 99
+def parse_time(elapsed) -> bytearray(8):
+    global oldtenth
+    mytime= bytearray(8)
+    total_minutes = int(elapsed // 60) % 100
+    ten_minutes = total_minutes // 10
+    if ten_minutes==0 :
+        mytime[0] = ord(' ')
+    else:
+        mytime[0] = ord('0') + ten_minutes
+    if total_minutes==0 :
+        mytime[1] = ord(' ')
+        mytime[2] = ord(' ')
+    else :
+        mytime[1] = ord('0') + total_minutes % 10
+        mytime[2] = ord(':')
+
+    tseconds = int(elapsed % 60)       # 秒
+    ten_seconds = tseconds //10
+    if (total_minutes==0) and (ten_seconds==0) :
+        mytime[3] = ord(' ')
+    else:
+        mytime[3] = ord('0') + ten_seconds
+
+    seconds = tseconds % 10
+    mytime[4] = ord('0') + seconds
+    mytime[5] = ord('.')
+    tenth = int((elapsed * 10) % 10)  # 1/10 秒
+    mytime[6] = ord('0') + tenth
+    hundred = int((elapsed * 100) % 10)
+    mytime[7] = ord('0') + hundred
+    if oldtenth!= tenth:
+        oldtenth=tenth
+        send_running_timer(mytime[:7])
+    return mytime
+
 # ===== シリアル送信ループ =====
 def serial_loop():
     global running, elapsed_base, reset_pending
-    oldtenth = 0
+    exchange_counter = [0]*10
 
-    reactionlane=0
+    mytime=bytearray(8)
     while True:
         with lock:
             if running:
                 elapsed = elapsed_base + (time.time() - start_time)
             else:
                 elapsed = elapsed_base
-
-        total_minutes = int(elapsed // 60) % 100
-        seconds = int(elapsed % 60)
-        tenth = int((elapsed * 10) % 10)
-        hundred = int((elapsed * 100 ) % 10)
+        mytime = parse_time(elapsed)
         if reset_pending:
             with lock:
                 reset_pending = False
-            frame = bytearray(16)
-            frame[0] = 0x02
-            frame[1] = ord('A')
-            frame[2] = ord('R')
-            frame[3] = 0x20
-            frame[4] = 0x20
-            frame[5] = 0x20
-            frame[6] = 0x20
-            frame[7] = 0x20
-            frame[8] = 0x20
-            frame[9] = 0x20
-            frame[10]= ord('0')
-            frame[11]= ord('.')
-            frame[12]= ord('0')
-            frame[13]= ord('0')
-            frame[14]= 0x20
-            frame[15]= 0x03
-            ser.write(frame)
-            print("Reset:", frame)
-
-        elif tenth != oldtenth:
-            oldtenth=tenth
-            frame = bytearray(16)
-
-            frame[0]  = 0x02
-            frame[1]  = ord('A')
-            frame[2]  = ord('R')
-            frame[3]  = 0x20
-            frame[4]  = 0x20
-            frame[5]  = 0x20
-            ten_minutes = total_minutes // 10
-            if (ten_minutes==0) :
-                frame[6] = 0x20
-            else :
-                frame[6]  = ord('0') + ten_minutes
-            minutes = total_minutes % 10
-            if (total_minutes == 0) :
-                frame[7] = 0x20
-                frame[8] = 0x20
-            else :
-                frame[7]  = ord('0') + minutes
-                frame[8]  = ord(':')
-            ten_seconds = seconds // 10
-            if ((ten_seconds == 0) and (total_minutes == 0)):
-                frame[9] = 0x20
-            else :
-                frame[9]  = ord('0') + ten_seconds
-            frame[10] = ord('0') + seconds % 10
-
-            frame[11] = ord('.')
-            frame[12] = ord('0') + tenth
-
-            frame[13] = 0x20
-            frame[14] = 0x20
-            frame[15] = 0x03
-
-            ser.write(frame)
-
+            send_reset()
         while not event_queue.empty():
-            key_frame = bytearray(16)
-            key_frame[0] = 0x02
-            key_frame[15] = 0x03
-            key_frame[1]  = ord('A')
             digit = event_queue.get()
-            if digit==30:
-                #.. reaction
-                key_frame[14]=ord('J')
-                key_frame[2]=0x20
-                key_frame[3]=ord('0')+reactionlane
-                reactionlane += 1
-                if reactionlane>9:
-                    reactionlane=0
-                key_frame[4]= 0x20
-                key_frame[5]= 0x20
-                key_frame[6]= ord('S')
-                key_frame[7]= ord('0')
-                key_frame[8]= ord('S')
-                key_frame[9]= ord('0')
-                key_frame[10]= ord('.')
-                key_frame[11]= ord('5')
-                key_frame[12]= ord('9')  # reactiontime is always 0.59
-                key_frame[13]= ord(' ') 
+            if digit>9:
+                digit-=10
+                send_goal(digit,mytime,"1")
             else:
-                if digit>9:
-                    digit-=10
-                    key_frame[14]=ord('G')
-                else:
-                    key_frame[14]=ord('L')
-                key_frame[2]  = ord('1')
-                key_frame[3]  = ord('0') + digit     # 押された番号
-                key_frame[4]  = ord('1')             # 仮の着順
-                key_frame[5]  = ord(' ')
-                ten_minutes = total_minutes // 10
-                if ( ten_minutes == 0 ) :
-                    key_frame[6] = 0x20
-                else :
-                    key_frame[6]  = ord('0') + ten_minutes
-                minutes = total_minutes % 10
-                if ( total_minutes == 0 ) :
-                    key_frame[7] = 0x20
-                    key_frame[8] = 0x20
-                else :
-                    key_frame[7]  = ord('0') + minutes
-                    key_frame[8]  = ord(':')
-                ten_seconds = seconds // 10
-                if ( ten_seconds == 0 ) and (total_minutes == 0) :
-                    key_frame[9] = 0x20
-                else :
-                    key_frame[9]  = ord('0') + ten_seconds
-                key_frame[10] = ord('0') + seconds % 10
-                key_frame[11] = ord('.')
-                key_frame[12] = ord('0') + tenth
-                key_frame[13] = ord('0') + hundred
-            ser.write(key_frame)
-            print(key_frame)
+                exchange_counter[digit]=50
+                send_lap(digit,mytime,"1")
+        for i in range(10):
+            if exchange_counter[i] == 1:
+                send_exchange(i) #引継ぎ
+            if exchange_counter[i]>0:
+                exchange_counter[i] -= 1
 
         time.sleep(0.01)
 
